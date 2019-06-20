@@ -3,6 +3,7 @@ import numpy as np
 import torch
 from torch.autograd import Function
 
+
 class ProjectionHelper():
     def __init__(self, intrinsic, depth_min, depth_max, image_dims, volume_dims, accuracy):
         self.intrinsic = intrinsic
@@ -26,13 +27,13 @@ class ProjectionHelper():
         return torch.Tensor([x, y, p[2]])
 
 
-    def compute_frustum_bounds(self, camera_to_world):
+    def compute_frustum_corners(self, camera_to_world):
         # input: camera pose (torch.Size([4, 4]))
-        # output: two points (x, y, z) (torch.Size([3])) that define the viewing frustum of the camera
+        # output: coordinates of the corner points of the viewing frustum of the camera
 
         corner_points = camera_to_world.new(8, 4, 1).fill_(1)
 
-        # pixel to camera
+        # image to camera
         # depth min
         corner_points[0][:3] = self.depth_to_skeleton(0, 0, self.depth_min).unsqueeze(1)
         corner_points[1][:3] = self.depth_to_skeleton(self.image_dims[0] - 1, 0, self.depth_min).unsqueeze(1)
@@ -43,42 +44,92 @@ class ProjectionHelper():
         corner_points[5][:3] = self.depth_to_skeleton(self.image_dims[0] - 1, 0, self.depth_max).unsqueeze(1)
         corner_points[6][:3] = self.depth_to_skeleton(self.image_dims[0] - 1, self.image_dims[1] - 1, self.depth_max).unsqueeze(1)
         corner_points[7][:3] = self.depth_to_skeleton(0, self.image_dims[1] - 1, self.depth_max).unsqueeze(1)
-        print(corner_points)
 
         # camera to world
         corner_coords = torch.bmm(camera_to_world.repeat(8, 1, 1), corner_points)
 
-        # choose the smallest (largest) values of x, y and z across the 8 points for bbox_min (bbox_max)
-        bbox_min, _ = torch.min(corner_coords[:, :3, 0], 0)
-        bbox_max, _ = torch.max(corner_coords[:, :3, 0], 0)
-        return bbox_min, bbox_max
+        return corner_coords
+
+    def compute_frustum_normals(self, corner_coords):
+        # input: coordinates of the corner points of the viewing frustum
+        # output: normals of the 6 planes defining the viewing frustum
+        normals = corner_coords.new(6, 3)
+
+        # compute plane normals
+        # front plane
+        plane_vec1 = corner_coords[3][:3] - corner_coords[0][:3]
+        plane_vec2 = corner_coords[1][:3] - corner_coords[0][:3]
+        normals[0] = torch.cross(plane_vec1.view(-1), plane_vec2.view(-1))
+
+        # right side plane
+        plane_vec1 = corner_coords[2][:3] - corner_coords[1][:3]
+        plane_vec2 = corner_coords[5][:3] - corner_coords[1][:3]
+        normals[1] = torch.cross(plane_vec1.view(-1), plane_vec2.view(-1))
+
+        # roof plane
+        plane_vec1 = corner_coords[3][:3] - corner_coords[2][:3]
+        plane_vec2 = corner_coords[6][:3] - corner_coords[2][:3]
+        normals[2] = torch.cross(plane_vec1.view(-1), plane_vec2.view(-1))
+
+        # left side plane
+        plane_vec1 = corner_coords[0][:3] - corner_coords[3][:3]
+        plane_vec2 = corner_coords[7][:3] - corner_coords[3][:3]
+        normals[3] = torch.cross(plane_vec1.view(-1), plane_vec2.view(-1))
+
+        # bottom plane
+        plane_vec1 = corner_coords[1][:3] - corner_coords[0][:3]
+        plane_vec2 = corner_coords[4][:3] - corner_coords[0][:3]
+        normals[4] = torch.cross(plane_vec1.view(-1), plane_vec2.view(-1))
+
+        # back plane
+        plane_vec1 = corner_coords[6][:3] - corner_coords[5][:3]
+        plane_vec2 = corner_coords[4][:3] - corner_coords[5][:3]
+        normals[5] = torch.cross(plane_vec1.view(-1), plane_vec2.view(-1))
+
+        return normals
+
+    def point_in_frustum(self, corner_coords, normals, new_pt):
+        # input: coordinates of points defining the frustum, normals defining the planes of the frustum
+        #       (pointing inwards), new point (must be torch.Size([3]))
+        # output: 1 or 0 whether new point is in viewing frustum or not
+
+        # create vector from new_pt to the planes
+        point_to_plane = corner_coords.new(6, 3)
+        point_to_plane[0:3] = (new_pt - corner_coords[2][:3].view(-1)).repeat(3, 1)
+        point_to_plane[3:6] = (new_pt - corner_coords[4][:3].view(-1)).repeat(3, 1)
+
+        # check if the scalar product with the normals is positive
+        for k, normal in enumerate(normals):
+            if torch.round(torch.dot(normal, point_to_plane[k]) * 100) / (100) > 0:
+                return 0
+
+        return 1
 
 
     def compute_projection(self, points, depth, camera_to_world, num_points):
-        # input: depth map (size: proj_image), camera pose (4x4), number of points in our point cloud
+        # input: tensor containing all points of the point cloud, depth map (size: proj_image), camera pose (4x4),
+        #          number of points in our point cloud
         # maybe: initialize ProjectionHelper with num_points
         # output: correspondence of points to pixels
 
-        # compute viewing frustum bounds
         world_to_camera = torch.inverse(camera_to_world)
-        point_bound_min, point_bound_max = self.compute_frustum_bounds(camera_to_world)
-        # TODO check if bounds are valid? positive and in correct range?
-        # .cuda()
 
-        # create list with all points and their coordinates
-        # should just be the list imported from h5 file
-        # ind_points = torch.arange(0, num_points, out = torch.LongTensor()) # .cuda()
-        # coords = camera_to_world.new(4, ind_points.size(0))
-
-        # dummy-list
+        # create 1-dim array with all indices and array with 4-dim coordinates x, y, z, 1 of points
         ind_points = torch.arange(0, num_points, out=torch.LongTensor())
         coords = camera_to_world.new(4, num_points)
         coords[:3, :] = torch.t(points)
         coords[3, :].fill_(1)
 
-        # consider only points that lie in frustum bound
-        mask_frustum_bounds = torch.ge(coords[0], point_bound_min[0]) * torch.ge(coords[1], point_bound_min[1]) * torch.ge(coords[2], point_bound_min[2])
-        mask_frustum_bounds = mask_frustum_bounds * torch.lt(coords[0], point_bound_max[0]) * torch.lt(coords[1], point_bound_max[1]) * torch.lt(coords[2], point_bound_max[2])
+        # compute viewing frustum
+        corner_coords = self.compute_frustum_corners(camera_to_world)
+        normals = self.compute_frustum_normals(corner_coords)
+        # .cuda()
+
+        # check if points are in viewing frustum and only keep according indices
+        mask_frustum_bounds = torch.ByteTensor(num_points)
+        for k, point in enumerate(points):
+            mask_frustum_bounds[k] = self.point_in_frustum(corner_coords, normals, point)
+
         if not mask_frustum_bounds.any():
             return None
         ind_points = ind_points[mask_frustum_bounds]
@@ -103,7 +154,6 @@ class ProjectionHelper():
         # keep only points that are in the correct depth ranges (self.depth_min - self.depth_max)
         depth_vals = torch.index_select(depth.view(-1), 0, valid_image_ind)
         depth_mask = depth_vals.ge(self.depth_min) * depth_vals.le(self.depth_max) * torch.abs(depth_vals - camera[2][valid_ind_mask]).le(self.accuracy)
-        # TODO torch.abs(...) necessary?
         if not depth_mask.any():
             return None
 
