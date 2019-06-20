@@ -22,7 +22,7 @@ parser.add_argument('--fy', type=float, default=577.870605, help='intrinsics')
 parser.add_argument('--mx', type=float, default=319.5, help='intrinsics')
 parser.add_argument('--my', type=float, default=239.5, help='intrinsics')
 #2d/3d
-parser.add_argument('--accuracy', type=float, default=0.05, help='voxel size (in meters)')
+parser.add_argument('--accuracy', type=float, default=0.1, help='voxel size (in meters)')
 parser.add_argument('--depth_min', type=float, default=0.4, help='min depth (in meters)')
 parser.add_argument('--depth_max', type=float, default=4.0, help='max depth (in meters)')
 
@@ -73,8 +73,10 @@ input = torch.Tensor(np.load('/Users/sophia/Documents/Studium/Mathematik/Master/
 points = input[:, :3]
 np.savetxt('point_cloud_scene0000_00.txt', points, delimiter=',')
 num_points = points.shape[0]
-print(camera_pose)
 
 three_dim, two_dim = projection.compute_projection(points, depth_image, camera_pose, num_points)
-# bbox_min, bbox_max = projection.compute_frustum_bounds(camera_pose)
+
+# corner_coords = projection.compute_frustum_bounds(camera_pose)
+# normals = projection.compute_frustum_normals(corner_coords)
+# new_pt = projection.point_in_frustum(corner_coords, normals, corner_coords[4][:3].view(-1))
 
