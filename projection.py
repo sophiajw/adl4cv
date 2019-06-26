@@ -5,12 +5,11 @@ from torch.autograd import Function
 
 
 class ProjectionHelper():
-    def __init__(self, intrinsic, depth_min, depth_max, image_dims, volume_dims, accuracy):
+    def __init__(self, intrinsic, depth_min, depth_max, image_dims, accuracy):
         self.intrinsic = intrinsic
         self.depth_min = depth_min
         self.depth_max = depth_max
         self.image_dims = image_dims
-        self.volume_dims = volume_dims
         self.accuracy = accuracy
 
 
@@ -174,10 +173,12 @@ class ProjectionHelper():
 class Projection(Function):
 
     @staticmethod
-    def forward(ctx, label, lin_indices_3d, lin_indices_2d, volume_dims):
+    def forward(ctx, label, lin_indices_3d, lin_indices_2d, num_points):
+        # label  = image_features (num_images*B, 31, 42, 128)
         ctx.save_for_backward(lin_indices_3d, lin_indices_2d)
         num_label_ft = 1 if len(label.shape) == 2 else label.shape[0]
-        output = label.new(num_label_ft, volume_dims[2], volume_dims[1], volume_dims[0]).fill_(0)
+        # num_label_ft = num_images ???
+        output = label.new(num_label_ft, num_points).fill_(0)
         num_ind = lin_indices_3d[0]
         if num_ind > 0:
             vals = torch.index_select(label.view(num_label_ft, -1), 1, lin_indices_2d[1:1+num_ind])
