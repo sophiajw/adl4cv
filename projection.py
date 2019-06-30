@@ -104,14 +104,12 @@ class ProjectionHelper():
 
         return 1
 
-
-    def points_in_frustum(self, corner_coords, normals, new_pts):
+    def points_in_frustum(self, corner_coords, normals, new_pts, return_mask=False):
         # input: coordinates of points defining the frustum, normals defining the planes of the frustum
         #       (pointing inwards), point set to be analyzed
         # output: number of point that lie within the frustum
 
         # create vectors from point set to the planes
-        point_to_plane = corner_coords.new(new_pts.shape[0]*6, 3)
         point_to_plane1 = (new_pts - corner_coords[2][:3].view(-1))
         point_to_plane2 = (new_pts - corner_coords[4][:3].view(-1))
         # check if the scalar product with the normals is positive
@@ -119,10 +117,10 @@ class ProjectionHelper():
         masks = list()
         # for each normal, create a mask for points that lie on the correct side of the plane
         for k, normal in enumerate(normals):
-            if(k < 3):
+            if (k < 3):
                 masks.append(torch.round(torch.mm(point_to_plane1, normal.unsqueeze(1)) * 100) / (100) < 0)
                 # somehow this has to be inverted to a "<" instead of ">". Don't understand the difference in
-                # the 2 functions forch.mm and torch.dot
+                # the 2 functions torch.mm and torch.dot
             else:
                 masks.append(torch.round(torch.mm(point_to_plane2, normal.unsqueeze(1)) * 100) / (100) < 0)
         mask = torch.ones(point_to_plane1.shape[0]) > 0
@@ -130,10 +128,11 @@ class ProjectionHelper():
         # create a combined mask, which keeps only the points that lie on the correct side of each plane
         for addMask in masks:
             mask = mask * addMask.squeeze()
-        out = torch.sum(mask)
 
-        return out
-
+        if return_mask == False:
+            return torch.sum(mask)
+        else:
+            return mask
 
     def compute_projection(self, points, depth, camera_to_world, num_points):
         # input: tensor containing all points of the point cloud, depth map (size: proj_image), camera pose (4x4),
@@ -155,9 +154,9 @@ class ProjectionHelper():
         # .cuda()
 
         # check if points are in viewing frustum and only keep according indices
-        mask_frustum_bounds = torch.ByteTensor(num_points).cuda()
-        for k, point in enumerate(points):
-            mask_frustum_bounds[k] = self.point_in_frustum(corner_coords, normals, point)
+        # mask_frustum_bounds = torch.ByteTensor(num_points).cuda()
+        # for k, point in enumerate(points):
+        mask_frustum_bounds = self.points_in_frustum(corner_coords, normals, points, return_mask=True).cuda()
 
         if not mask_frustum_bounds.any():
             return None
