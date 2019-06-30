@@ -6,10 +6,10 @@ import torch.backends.cudnn as cudnn
 import numpy as np
 
 import util
-# import etw_pytorch_utils as pt_utils
+import etw_pytorch_utils as pt_utils
 from projection import Projection
-# from pointnet2_modules import PointnetSAModule, PointnetFPModule
-# from pointnet2.utils.pointnet2_modules import PointnetSAModule, PointnetFPModule
+#from pointnet2_modules import PointnetSAModule, PointnetFPModule
+from pointnet2.utils.pointnet2_modules import PointnetSAModule, PointnetFPModule
 
 # z-y-x coordinates
 class Model2d3d(nn.Module):
@@ -33,60 +33,59 @@ class Model2d3d(nn.Module):
 
         # pointnet++ on the point clouds with 2d features
         # set abstraction (SA) layers
-        # self.SA_modules = nn.ModuleList()
-        # self.SA_modules.append(
-        #     PointnetSAModule(
-        #         npoint=1024,
-        #         radius=0.1,
-        #         nsample=32,
-        #         mlp=[input_channels, 32, 32, 64],
-        #         use_xyz=use_xyz,
-        #     )
-        # )
-        # self.SA_modules.append(
-        #     PointnetSAModule(
-        #         npoint=256,
-        #         radius=0.2,
-        #         nsample=32,
-        #         mlp=[64, 64, 64, 128],
-        #         use_xyz=use_xyz,
-        #     )
-        # )
-        # self.SA_modules.append(
-        #     PointnetSAModule(
-        #         npoint=64,
-        #         radius=0.4,
-        #         nsample=32,
-        #         mlp=[128, 128, 128, 256],
-        #         use_xyz=use_xyz,
-        #     )
-        # )
-        # self.SA_modules.append(
-        #     PointnetSAModule(
-        #         npoint=16,
-        #         radius=0.8,
-        #         nsample=32,
-        #         mlp=[256, 256, 256, 512],
-        #         use_xyz=use_xyz,
-        #     )
-        # )
-        #
-        # # feature propagation to end up with original point cloud (interpolate feature values)
-        # self.FP_modules = nn.ModuleList()
-        # self.FP_modules.append(
-        #     PointnetFPModule(mlp=[128 + input_channels, 128, 128, 128])
-        # )
-        # self.FP_modules.append(PointnetFPModule(mlp=[256 + 64, 256, 128]))
-        # self.FP_modules.append(PointnetFPModule(mlp=[256 + 128, 256, 256]))
-        # self.FP_modules.append(PointnetFPModule(mlp=[512 + 256, 256, 256]))
-        #
-
-        # self.FC_layer = (
-        #     pt_utils.Seq(128)
-        #     .conv1d(128, bn=True)
-        #     .dropout()
-        #     .conv1d(num_classes, activation=None)
-        # )
+        self.SA_modules = nn.ModuleList()
+        self.SA_modules.append(
+            PointnetSAModule(
+                npoint=1024,
+                radius=0.1,
+                nsample=32,
+                mlp=[input_channels, 32, 32, 64],
+                use_xyz=use_xyz,
+            )
+        )
+        self.SA_modules.append(
+            PointnetSAModule(
+                npoint=256,
+                radius=0.2,
+                nsample=32,
+                mlp=[64, 64, 64, 128],
+                use_xyz=use_xyz,
+            )
+        )
+        self.SA_modules.append(
+            PointnetSAModule(
+                npoint=64,
+                radius=0.4,
+                nsample=32,
+                mlp=[128, 128, 128, 256],
+                use_xyz=use_xyz,
+            )
+        )
+        self.SA_modules.append(
+            PointnetSAModule(
+                npoint=16,
+                radius=0.8,
+                nsample=32,
+                mlp=[256, 256, 256, 512],
+                use_xyz=use_xyz,
+            )
+        )
+        
+        # feature propagation to end up with original point cloud (interpolate feature values)
+        self.FP_modules = nn.ModuleList()
+        self.FP_modules.append(
+            PointnetFPModule(mlp=[128 + input_channels, 128, 128, 128])
+        )
+        self.FP_modules.append(PointnetFPModule(mlp=[256 + 64, 256, 128]))
+        self.FP_modules.append(PointnetFPModule(mlp=[256 + 128, 256, 256]))
+        self.FP_modules.append(PointnetFPModule(mlp=[512 + 256, 256, 256]))
+        
+        self.FC_layer = (
+            pt_utils.Seq(128)
+            .conv1d(128, bn=True)
+            .dropout()
+            .conv1d(num_classes, activation=None)
+        )
 
     def _break_up_pc(self, pc):
         r"""
@@ -137,21 +136,20 @@ class Model2d3d(nn.Module):
         concatenated_cloud = torch.cat([point_cloud, image_features], 2)
 
         # split point cloud into coordinates and features
-        # xyz, features = self._break_up_pc(concatenated_cloud)
-        #
-        # # set abstraction layers
-        # l_xyz, l_features = [xyz], [features]
-        # for i in range(len(self.SA_modules)):
-        #     li_xyz, li_features = self.SA_modules[i](l_xyz[i], l_features[i])  # input of forward pass: xyz, featuers
-        #     l_xyz.append(li_xyz)
-        #     l_features.append(li_features)
-        #
-        # # feature propagation layers
-        # for i in range(-1, -(len(self.FP_modules) + 1), -1):
-        #     l_features[i - 1] = self.FP_modules[i](
-        #         l_xyz[i - 1], l_xyz[i], l_features[i - 1], l_features[i]
-        #     )
+        xyz, features = self._break_up_pc(concatenated_cloud)
+        
+         # set abstraction layers
+        l_xyz, l_features = [xyz], [features]
+        for i in range(len(self.SA_modules)):
+             li_xyz, li_features = self.SA_modules[i](l_xyz[i], l_features[i])  # input of forward pass: xyz, featuers
+             l_xyz.append(li_xyz)
+             l_features.append(li_features)
+        
+         # feature propagation layers
+        for i in range(-1, -(len(self.FP_modules) + 1), -1):
+             l_features[i - 1] = self.FP_modules[i](
+                 l_xyz[i - 1], l_xyz[i], l_features[i - 1], l_features[i]
+             )
 
         # classifier
-        return
         return self.FC_layer(l_features[0]).transpose(1, 2).contiguous()

@@ -1,3 +1,4 @@
+
 import torch
 import numpy as np
 import os
@@ -16,16 +17,17 @@ intrinsic = util.adjust_intrinsic(intrinsic, [640, 480], proj_image_dims)
 
 projection = ProjectionHelper(intrinsic, 0.4, 4.0, proj_image_dims, 0.05)
 model = Model2d3d(42, 3, 128, intrinsic, proj_image_dims, 0.4, 4.0, 0.05)
+model = model.cuda()
 
 # get point cloud
-input = torch.Tensor(np.load('/Users/sophia/Documents/Studium/Mathematik/Master/AdvancedDeepLearning4ComputerVision/data/scene0000_00.npy'))
+input = torch.Tensor(np.load('/media/lorenzlamm/My Book/pointnet2/scannet/preprocessing/scannet_scenes/scene0000_00.npy')).cuda()
 point_cloud = input[:, :3]
 num_points = point_cloud.shape[0]
 
 batch_size = 2
 num_images = 3
 num_points_sample = 8192
-point_batch = point_cloud.new(batch_size*num_images, num_points_sample, 3)
+point_batch = point_cloud.new(batch_size*num_images, num_points_sample, 3).cuda()
 for i in range(batch_size*num_images):
   point_batch[i] = point_cloud[((i)*num_points_sample):((i+1)*num_points_sample),:]
 point_batch[5] = point_batch[4]
@@ -39,13 +41,13 @@ imageft = torch.ones(batch_size*num_images, 128, proj_image_dims[0], proj_image_
 parser = argparse.ArgumentParser()
 # data paths
 parser.add_argument('--data_path_2d',
-        default='/Users/sophia/Documents/Studium/Mathematik/Master/AdvancedDeepLearning4ComputerVision/data/2doutput',
+        default='/media/lorenzlamm/My Book/Scannet/out_images',
         help='path to 2d train data')
 opt = parser.parse_args()
 print(opt)
 
 
-depth_images = torch.FloatTensor(batch_size * num_images, proj_image_dims[1], proj_image_dims[0])
+depth_images = torch.cuda.FloatTensor(batch_size * num_images, proj_image_dims[1], proj_image_dims[0])
 # depth_images = torch.cuda.FloatTensor(batch_size * num_images, proj_image_dims[1], proj_image_dims[0])
 
 # load_frames_multi
@@ -71,7 +73,7 @@ lines = open(pose_file).read().splitlines()
 assert len(lines) == 4
 lines = [[x[0],x[1],x[2],x[3]] for x in (x.split(" ") for x in lines)]
 camera_pose = torch.from_numpy(np.asarray(lines).astype(np.float32))
-camera_pose_batch = camera_pose.new(batch_size*num_images, 4, 4)
+camera_pose_batch = camera_pose.new(batch_size*num_images, 4, 4).cuda()
 for i in range(batch_size*num_images):
     camera_pose_batch[i] = camera_pose
 
@@ -92,4 +94,4 @@ proj_ind_2d = torch.stack(proj_mapping[1]) # lin_indices_2d
 
 
 # forward pass
-output = model(point_batch, imageft, torch.autograd.Variable(proj_ind_3d), torch.autograd.Variable(proj_ind_2d))  # same inputs as forward fct
+output = model(point_batch.cuda(), imageft.cuda(), torch.autograd.Variable(proj_ind_3d).cuda(), torch.autograd.Variable(proj_ind_2d).cuda())  # same inputs as forward fct

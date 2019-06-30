@@ -105,6 +105,36 @@ class ProjectionHelper():
         return 1
 
 
+    def points_in_frustum(self, corner_coords, normals, new_pts):
+        # input: coordinates of points defining the frustum, normals defining the planes of the frustum
+        #       (pointing inwards), point set to be analyzed
+        # output: number of point that lie within the frustum
+
+        # create vectors from point set to the planes
+        point_to_plane = corner_coords.new(new_pts.shape[0]*6, 3)
+        point_to_plane1 = (new_pts - corner_coords[2][:3].view(-1))
+        point_to_plane2 = (new_pts - corner_coords[4][:3].view(-1))
+        # check if the scalar product with the normals is positive
+
+        masks = list()
+        # for each normal, create a mask for points that lie on the correct side of the plane
+        for k, normal in enumerate(normals):
+            if(k < 3):
+                masks.append(torch.round(torch.mm(point_to_plane1, normal.unsqueeze(1)) * 100) / (100) < 0)
+                # somehow this has to be inverted to a "<" instead of ">". Don't understand the difference in
+                # the 2 functions forch.mm and torch.dot
+            else:
+                masks.append(torch.round(torch.mm(point_to_plane2, normal.unsqueeze(1)) * 100) / (100) < 0)
+        mask = torch.ones(point_to_plane1.shape[0]) > 0
+
+        # create a combined mask, which keeps only the points that lie on the correct side of each plane
+        for addMask in masks:
+            mask = mask * addMask.squeeze()
+        out = torch.sum(mask)
+
+        return out
+
+
     def compute_projection(self, points, depth, camera_to_world, num_points):
         # input: tensor containing all points of the point cloud, depth map (size: proj_image), camera pose (4x4),
         #          number of points in our point cloud
@@ -114,7 +144,7 @@ class ProjectionHelper():
         world_to_camera = torch.inverse(camera_to_world)
 
         # create 1-dim array with all indices and array with 4-dim coordinates x, y, z, 1 of points
-        ind_points = torch.arange(0, num_points, out=torch.LongTensor())
+        ind_points = torch.arange(0, num_points, out=torch.LongTensor()).cuda()
         coords = camera_to_world.new(4, num_points)
         coords[:3, :] = torch.t(points)
         coords[3, :].fill_(1)
@@ -125,7 +155,7 @@ class ProjectionHelper():
         # .cuda()
 
         # check if points are in viewing frustum and only keep according indices
-        mask_frustum_bounds = torch.ByteTensor(num_points)
+        mask_frustum_bounds = torch.ByteTensor(num_points).cuda()
         for k, point in enumerate(points):
             mask_frustum_bounds[k] = self.point_in_frustum(corner_coords, normals, point)
 
@@ -135,7 +165,7 @@ class ProjectionHelper():
         coords = coords[:, ind_points]
 
         # project world (coords) to camera
-        camera = torch.mm(world_to_camera, coords)
+        camera = torch.mm(world_to_camera, coords).cpu()
 
         # project camera to image
         camera[0] = (camera[0] * self.intrinsic[0][0]) / camera[2] + self.intrinsic[0][2]
@@ -151,8 +181,8 @@ class ProjectionHelper():
         valid_image_ind = valid_image_ind_y * self.image_dims[0] + valid_image_ind_x
 
         # keep only points that are in the correct depth ranges (self.depth_min - self.depth_max)
-        depth_vals = torch.index_select(depth.view(-1), 0, valid_image_ind)
-        depth_mask = depth_vals.ge(self.depth_min) * depth_vals.le(self.depth_max) * torch.abs(depth_vals - camera[2][valid_ind_mask]).le(self.accuracy)
+        depth_vals = torch.index_select(depth.view(-1), 0, valid_image_ind.cpu())
+        depth_mask = depth_vals.cpu().ge(self.depth_min).cpu() * depth_vals.cpu().le(self.depth_max).cpu() * torch.abs(depth_vals.cpu() - camera[2][valid_ind_mask.cpu()]).le(self.accuracy).cpu()
         if not depth_mask.any():
             return None
 
@@ -205,4 +235,3 @@ class Projection(Function):
         vals = torch.index_select(grad_output.data.contiguous().view(num_ft, -1), 1, lin_indices_3d.data[1:1+num_ind])
         grad_label.data.view(num_ft, -1)[:, lin_indices_2d.data[1:1+num_ind]] = vals
         return grad_label, None, None, None
-
