@@ -31,63 +31,6 @@ class Model2d3d(nn.Module):
         # pooling across num_images point clouds
         self.pooling = nn.MaxPool1d(kernel_size=self.num_images)
 
-        # pointnet++ on the point clouds with 2d features
-        # set abstraction (SA) layers
-        # self.SA_modules = nn.ModuleList()
-        # self.SA_modules.append(
-        #     PointnetSAModule(
-        #         npoint=1024,
-        #         radius=0.1,
-        #         nsample=32,
-        #         mlp=[input_channels, 32, 32, 64],
-        #         use_xyz=use_xyz,
-        #     )
-        # )
-        # self.SA_modules.append(
-        #     PointnetSAModule(
-        #         npoint=256,
-        #         radius=0.2,
-        #         nsample=32,
-        #         mlp=[64, 64, 64, 128],
-        #         use_xyz=use_xyz,
-        #     )
-        # )
-        # self.SA_modules.append(
-        #     PointnetSAModule(
-        #         npoint=64,
-        #         radius=0.4,
-        #         nsample=32,
-        #         mlp=[128, 128, 128, 256],
-        #         use_xyz=use_xyz,
-        #     )
-        # )
-        # self.SA_modules.append(
-        #     PointnetSAModule(
-        #         npoint=16,
-        #         radius=0.8,
-        #         nsample=32,
-        #         mlp=[256, 256, 256, 512],
-        #         use_xyz=use_xyz,
-        #     )
-        # )
-        #
-        # # feature propagation to end up with original point cloud (interpolate feature values)
-        # self.FP_modules = nn.ModuleList()
-        # self.FP_modules.append(
-        #     PointnetFPModule(mlp=[128 + input_channels, 128, 128, 128])
-        # )
-        # self.FP_modules.append(PointnetFPModule(mlp=[256 + 64, 256, 128]))
-        # self.FP_modules.append(PointnetFPModule(mlp=[256 + 128, 256, 256]))
-        # self.FP_modules.append(PointnetFPModule(mlp=[512 + 256, 256, 256]))
-        #
-
-        # self.FC_layer = (
-        #     pt_utils.Seq(128)
-        #     .conv1d(128, bn=True)
-        #     .dropout()
-        #     .conv1d(num_classes, activation=None)
-        # )
-
     def _break_up_pc(self, pc):
         r"""
         Breaks point cloud up into coordinates (xyz) and features
@@ -101,15 +44,6 @@ class Model2d3d(nn.Module):
         return xyz, features
 
     def forward(self, point_cloud, image_features, projection_indices_3d, projection_indices_2d):
-        r"""
-        forward pass of 3d model on fused input of features and geometry
-
-        :param point_cloud: shape: (batch_size*num_images, num_input_channels, num_points_sample)
-        :param image_features: shape: (batch_size*num_images, num_input_channels, proj_image_dims[0], proj_image_dims[1])
-        :param projection_indices_3d: shape: (batch_size*num_images, num_points_sample)
-        :param projection_indices_2d: shape: (batch_size*num_images, num_points_sample)
-        :return: output of network after classifier
-        """
         # projection_indices_3d (batch_size * num_images, num_points_sample + 1)
         assert len(point_cloud.shape) == 3 and len(image_features.shape) == 4
         batch_size = point_cloud.shape[0]
@@ -136,22 +70,5 @@ class Model2d3d(nn.Module):
         # TODO split pointnet++ and process geometry and features separately in the beginning
         concatenated_cloud = torch.cat([point_cloud, image_features], 2)
 
-        # split point cloud into coordinates and features
-        # xyz, features = self._break_up_pc(concatenated_cloud)
-        #
-        # # set abstraction layers
-        # l_xyz, l_features = [xyz], [features]
-        # for i in range(len(self.SA_modules)):
-        #     li_xyz, li_features = self.SA_modules[i](l_xyz[i], l_features[i])  # input of forward pass: xyz, featuers
-        #     l_xyz.append(li_xyz)
-        #     l_features.append(li_features)
-        #
-        # # feature propagation layers
-        # for i in range(-1, -(len(self.FP_modules) + 1), -1):
-        #     l_features[i - 1] = self.FP_modules[i](
-        #         l_xyz[i - 1], l_xyz[i], l_features[i - 1], l_features[i]
-        #     )
-
         # classifier
-        return
-        return self.FC_layer(l_features[0]).transpose(1, 2).contiguous()
+        return concatenated_cloud

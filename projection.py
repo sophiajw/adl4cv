@@ -172,15 +172,25 @@ class ProjectionHelper():
 # Inherit from Function
 class Projection(Function):
 
-    @staticmethod
+    #@staticmethod
     def forward(ctx, label, lin_indices_3d, lin_indices_2d, num_points):
-        # label  = image_features (num_images*B, 31, 42, 128)
+        r"""
+        forward pass of backprojection for 2d features onto 3d points
+
+        :param label: image features (shape: (num_input_channels, proj_image_dims[0], proj_image_dims[1]))
+        :param lin_indices_3d: point indices from projection (shape: (num_input_channels, num_points_sample))
+        :param lin_indices_2d: pixel indices from projection (shape: (num_input_channels, num_points_sample))
+        :param num_points: number of points in one sample
+        :return: array of points in sample with projected features (shape: (num_input_channels, num_points))
+        """
+        # label  = image_features (128, 41, 32)
         ctx.save_for_backward(lin_indices_3d, lin_indices_2d)
-        num_label_ft = 1 if len(label.shape) == 2 else label.shape[0]
-        # num_label_ft = num_images ???
+        num_label_ft = 1 if len(label.shape) == 2 else label.shape[0] # = num_input_channels
+
         output = label.new(num_label_ft, num_points).fill_(0)
         num_ind = lin_indices_3d[0]
         if num_ind > 0:
+            # selects values from image_features at indices given by lin_indices_2d
             vals = torch.index_select(label.view(num_label_ft, -1), 1, lin_indices_2d[1:1+num_ind])
             output.view(num_label_ft, -1)[:, lin_indices_3d[1:1+num_ind]] = vals
         return output
