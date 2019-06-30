@@ -63,7 +63,7 @@ os.environ['CUDA_VISIBLE_DEVICES']=str(opt.gpu)
 # create camera intrinsics
 input_image_dims = [328, 256]
 proj_image_dims = [41, 32]
-intrinsic = util.make_intrinsic(opt.fx, opt.fy, opt.mx, opt.my) # affine transformation from image plane to pixel coords
+intrinsic = util.make_intrinsic(opt.fx, opt.fy, opt.mx, opt.my)
 intrinsic = util.adjust_intrinsic(intrinsic, [opt.intrinsic_image_width, opt.intrinsic_image_height], proj_image_dims)
 intrinsic = intrinsic.cuda()
 grid_dims = [opt.grid_dimX, opt.grid_dimY, opt.grid_dimZ]
@@ -120,20 +120,28 @@ confusion2d_val = tnt.meter.ConfusionMeter(num_classes)
 
 def train(epoch, iter, log_file, train_file, log_file_2d):
     train_loss = []
+    if opt.use_proxy_loss:
+        model2d_classifier.train()
+
+    points, labels, frames = data_util.load_hdf5_data(train_file, num_classes)
+# shape of points: (1000, 8192, 3)
+# shape of labels: (1000, 8192,)
+# shape of frames: (1000, 5,): 0th entry: scene (0000), 1st entry: version of scene(00), 2-4th entry: image ids
+    frames = frames[:, :2+num_images]
+    #volumes = volumes.permute(0, 1, 4, 3, 2) 
+# no permutation necessary
     train_loss_2d = []
     model.train()
     start = time.time()
     model2d_trainable.train()
-    if opt.use_proxy_loss:
-        model2d_classifier.train()
+    #labels = labels.permute(0, 1, 4, 3, 2)
+# no permutation necessary
 
-    volumes, labels, frames, world_to_grids = data_util.load_hdf5_data(train_file, num_classes)
-    frames = frames[:, :2+num_images]
-    volumes = volumes.permute(0, 1, 4, 3, 2)
-    labels = labels.permute(0, 1, 4, 3, 2)
+    #labels = labels[:, 0, :, grid_centerX, grid_centerY]  # center columns as targets
+# not necessary; want to predict every point in cloud
 
-    labels = labels[:, 0, :, grid_centerX, grid_centerY]  # center columns as targets
-    num_samples = volumes.shape[0]
+    num_samples = points.shape[0]
+# TODO: concatenate all hdf5 files to one large file
     # shuffle
     indices = torch.randperm(num_samples).long().split(batch_size)
     # remove last mini-batch so that all the batches have equal size
@@ -151,12 +159,13 @@ def train(epoch, iter, log_file, train_file, log_file_2d):
         mask = targets.view(-1).data.clone()
         for k in range(num_classes):
             if criterion_weights[k] == 0:
-                mask[mask.eq(k)] = 0
+                mask[mask.eq(k)] = 0 # excludes all objects that are not contained in class list
         maskindices = mask.nonzero().squeeze()
         if len(maskindices.shape) == 0:
             continue
-        transforms = world_to_grids[v].unsqueeze(1)
-        transforms = transforms.expand(batch_size, num_images, 4, 4).contiguous().view(-1, 4, 4).cuda()
+        #transforms = world_to_grids[v].unsqueeze(1)
+        #transforms = transforms.expand(batch_size, num_images, 4, 4).contiguous().view(-1, 4, 4).cuda()
+        # don't need transforms (world_to_grid) anymore
         data_util.load_frames_multi(opt.data_path_2d, frames[v], depth_images, color_images, camera_poses, color_mean, color_std)
 
         # compute projection mapping
@@ -165,8 +174,8 @@ def train(epoch, iter, log_file, train_file, log_file_2d):
             #print '(invalid sample)'
             continue
         proj_mapping = zip(*proj_mapping)
-        proj_ind_3d = torch.stack(proj_mapping[0]) # lin_indices_3d
-        proj_ind_2d = torch.stack(proj_mapping[1]) # lin_indices_2d
+        proj_ind_3d = torch.stack(proj_mapping[0])
+        proj_ind_2d = torch.stack(proj_mapping[1])
 
         if opt.use_proxy_loss:
             data_util.load_label_frames(opt.data_path_2d, frames[v], label_images, num_classes)
@@ -178,15 +187,15 @@ def train(epoch, iter, log_file, train_file, log_file_2d):
             if (len(mask2d.shape) == 0):
                 continue  # nothing to optimize for here
         # 2d
-        imageft_fixed = model2d_fixed(torch.autograd.Variable(color_images)) # enet (create_enet outputs 3 enets (fixed, trainable, classifier))
+        imageft_fixed = model2d_fixed(torch.autograd.Variable(color_images))
         imageft = model2d_trainable(imageft_fixed)
         if opt.use_proxy_loss:
             ft2d = model2d_classifier(imageft)
             ft2d = ft2d.permute(0, 2, 3, 1).contiguous()
 
         # 2d/3d
-        input3d = torch.autograd.Variable(volumes[v].cuda()) # volumes = 'data' in hd5f data 
-        output = model(input3d, imageft, torch.autograd.Variable(proj_ind_3d), torch.autograd.Variable(proj_ind_2d), grid_dims) # same inputs as forward fct
+        input3d = torch.autograd.Variable(volumes[v].cuda())
+        output = model(input3d, imageft, torch.autograd.Variable(proj_ind_3d), torch.autograd.Variable(proj_ind_2d), grid_dims)
 
         loss = criterion(output.view(-1, num_classes), targets.view(-1))
         train_loss.append(loss.item())
