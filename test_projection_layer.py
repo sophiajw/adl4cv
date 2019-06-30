@@ -1,6 +1,8 @@
 import os
 import argparse
-from scipy import misc
+#from scipy import misc
+from scipy.ndimage import imread
+
 import numpy as np
 import torch
 
@@ -37,7 +39,7 @@ grid_dims = [31, 31, 62]
 intrinsic = util.make_intrinsic(opt.fx, opt.fy, opt.mx, opt.my)
 intrinsic = util.adjust_intrinsic(intrinsic, [opt.intrinsic_image_width, opt.intrinsic_image_height], proj_image_dims)
 
-projection = ProjectionHelper(intrinsic, opt.depth_min, opt.depth_max, proj_image_dims, grid_dims, opt.accuracy)
+projection = ProjectionHelper(intrinsic, opt.depth_min, opt.depth_max, proj_image_dims, opt.accuracy)
 
 
 # compute_projection
@@ -54,7 +56,7 @@ depth_file = os.path.join(opt.data_path_2d, scan_name, 'depth', str(frame_id) + 
 depth_image_dims = [depth_images.shape[2], depth_images.shape[1]]
 
 # load_depth_label_pose
-depth_image = misc.imread(depth_file)
+depth_image = imread(depth_file)
 # preprocess
 depth_image = resize_crop_image(depth_image, depth_image_dims) # resize to proj_iamge (features), i.e. 32x14
 depth_image = depth_image.astype(np.float32) / 1000.0
