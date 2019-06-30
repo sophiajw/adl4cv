@@ -172,7 +172,7 @@ class ProjectionHelper():
 # Inherit from Function
 class Projection(Function):
 
-    #@staticmethod
+    @staticmethod
     def forward(ctx, label, lin_indices_3d, lin_indices_2d, num_points):
         r"""
         forward pass of backprojection for 2d features onto 3d points
