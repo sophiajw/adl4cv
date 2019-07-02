@@ -75,9 +75,17 @@ def read_class_weights_from_file(filename, num_classes, normalize):
         weights = weights / torch.sum(weights)
     return weights
 
+def set_bn_momentum_default(bn_momentum):
+    def fn(m):
+        if isinstance(m, (torch.nn.BatchNorm1d, torch.nn.BatchNorm2d, torch.nn.BatchNorm3d)):
+            m.momentum = bn_momentum
+
+    return fn
+
+
 class BNMomentumScheduler(object):
     def __init__(self, model, bn_lambda, last_epoch=-1, setter=set_bn_momentum_default):
-        if not isinstance(model, nn.Module):
+        if not isinstance(model, torch.nn.Module):
             raise RuntimeError(
                 "Class '{}' is not a PyTorch nn Module".format(type(model).__name__)
             )
