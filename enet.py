@@ -584,7 +584,7 @@ def create_enet(num_classes):
 
 def create_enet_for_3d(type, model_path, num_3d_classes):
     num_classes = type[0]
-    model = create_enet(num_classes)
+    model = create_enet(num_classes) # returns nn.Sequential of ENet layers
     model.load_state_dict(torch.load(model_path))
     # remove the classifier
     n = len(model)

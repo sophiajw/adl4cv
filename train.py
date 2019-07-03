@@ -3,15 +3,19 @@ import argparse
 import os, sys, inspect, time
 import random
 import torch
+import torch.nn as nn
 import torchnet as tnt
+import torch.optim.lr_scheduler as lr_sched
 import numpy as np
 import itertools
 
 import util
 import data_util
 from model import Model2d3d
+from model import model_fn_decorator
 from enet import create_enet_for_3d
 from projection import ProjectionHelper
+
 
 ENET_TYPES = {'scannet': (41, [0.496342, 0.466664, 0.440796], [0.277856, 0.28623, 0.291129])}  #classes, color mean/std 
 
@@ -29,16 +33,22 @@ parser.add_argument('--gpu', type=int, default=0, help='which gpu to use')
 parser.add_argument('--batch_size', type=int, default=8, help='input batch size')
 parser.add_argument('--max_epoch', type=int, default=20, help='number of epochs to train for')
 parser.add_argument('--lr', type=float, default=0.001, help='learning rate, default=0.001')
+parser.add_argument('--lr_pointnet', type=float, default=1e-2, help='Initial learning rate for PointNet [default: 1e-2]')
+parser.add_argument("--lr_decay", type=float, default=0.5, help="Learning rate decay gamma [default: 0.5]")
+parser.add_argument("--decay_step", type=float, default=2e5, help="Learning rate decay step [default: 20]")
+parser.add_argument("--bn_momentum", type=float, default=0.9, help="Initial batch norm momentum [default: 0.9")
+parser.add_argument("--bn_decay", type=float, default=0.5, help="Batch norm momentum decay gamma [default: 0.5]")
 parser.add_argument('--momentum', type=float, default=0.9, help='momentum, default=0.9')
 parser.add_argument('--num_nearest_images', type=int, default=3, help='#images')
 parser.add_argument('--weight_decay', type=float, default=0.0005, help='weight decay, default=0.0005')
+parser.add_argument('--weight_decay_pointnet', type=float, default=0, help='L2 regularization coeff [default: 0.0]')
 parser.add_argument('--retrain', default='', help='model to load')
 parser.add_argument('--start_epoch', type=int, default=0, help='start epoch')
 parser.add_argument('--model2d_type', default='scannet', help='which enet (scannet)')
 parser.add_argument('--model2d_path', required=True, help='path to enet model')
 parser.add_argument('--use_proxy_loss', dest='use_proxy_loss', action='store_true')
 # 2d/3d 
-parser.add_argument('--voxel_size', type=float, default=0.05, help='voxel size (in meters)')
+parser.add_argument('--accuracy', type=float, default=0.05, help='accuracy of point projection (in meters)')
 parser.add_argument('--grid_dimX', type=int, default=31, help='3d grid dim x')
 parser.add_argument('--grid_dimY', type=int, default=31, help='3d grid dim y')
 parser.add_argument('--grid_dimZ', type=int, default=62, help='3d grid dim z')
@@ -53,7 +63,7 @@ parser.add_argument('--mx', type=float, default=319.5, help='intrinsics')
 parser.add_argument('--my', type=float, default=239.5, help='intrinsics')
 
 parser.set_defaults(use_proxy_loss=False)
-opt = parser.parse_args()
+opt = parser.parse_opt()
 assert opt.model2d_type in ENET_TYPES
 print(opt)
 
@@ -74,12 +84,13 @@ grid_centerX = opt.grid_dimX // 2
 grid_centerY = opt.grid_dimY // 2
 color_mean = ENET_TYPES[opt.model2d_type][1]
 color_std = ENET_TYPES[opt.model2d_type][2]
+input_channels = 128
 
-# create model
+# create enet and pointnet models
 num_classes = opt.num_classes
 model2d_fixed, model2d_trainable, model2d_classifier = create_enet_for_3d(ENET_TYPES[opt.model2d_type], opt.model2d_path, num_classes)
-model = Model2d3d(num_classes, num_images, intrinsic, proj_image_dims, grid_dims, opt.depth_min, opt.depth_max, opt.voxel_size)
-projection = ProjectionHelper(intrinsic, opt.depth_min, opt.depth_max, proj_image_dims, grid_dims, opt.voxel_size)
+model = Model2d3d(num_classes, num_images, input_channels, intrinsic, proj_image_dims, opt.depth_min, opt.depth_max, opt.accuracy)
+projection = ProjectionHelper(intrinsic, opt.depth_min, opt.depth_max, proj_image_dims, grid_dims, opt.accuracy)
 # create loss
 criterion_weights = torch.ones(num_classes) 
 if opt.class_weight_file:
@@ -100,10 +111,36 @@ model2d_classifier = model2d_classifier.cuda()
 model = model.cuda()
 criterion = criterion.cuda()
 
-optimizer = torch.optim.SGD(model.parameters(), lr=opt.lr, momentum=opt.momentum, weight_decay=opt.weight_decay)
+# initialize optimizer
+optimizer = torch.optim.Adam(model.parameters(), lr=opt.lr_pointnet, weight_decay=opt.weight_decay_pointnet)
 optimizer2d = torch.optim.SGD(model2d_trainable.parameters(), lr=opt.lr, momentum=opt.momentum, weight_decay=opt.weight_decay)
 if opt.use_proxy_loss:
     optimizer2dc = torch.optim.SGD(model2d_classifier.parameters(), lr=opt.lr, momentum=opt.momentum, weight_decay=opt.weight_decay)
+
+# set up learning rate/ bnm scheduler for pointnet++
+lr_clip = 1e-5
+bnm_clip = 1e-2
+lr_lbmd = lambda it: max(
+        opt.lr_decay ** (int(it * opt.batch_size / opt.decay_step)),
+        lr_clip / opt.lr,
+    )
+bnm_lmbd = lambda it: max(
+    opt.bn_momentum
+    * opt.bn_decay ** (int(it * opt.batch_size / opt.decay_step)),
+    bnm_clip,
+)
+
+it = -1  # for the initialize value of `LambdaLR` and `BNMomentumScheduler`
+
+lr_scheduler = lr_sched.LambdaLR(optimizer, lr_lambda=lr_lbmd, last_epoch=it)
+bnm_scheduler = util.BNMomentumScheduler(model, bn_lambda=bnm_lmbd, last_epoch=it)
+
+it = max(it, 0)  # for the initialize value of `trainer.train`
+
+# TODO implement loading from checkpoints
+
+# function to compute accuracy and miou in pointnet
+model_fn = model_fn_decorator(nn.CrossEntropyLoss())
 
 # data files
 train_files = util.read_lines_from_file(opt.train_data_list)
@@ -120,34 +157,38 @@ confusion2d_val = tnt.meter.ConfusionMeter(num_classes)
 
 def train(epoch, iter, log_file, train_file, log_file_2d):
     train_loss = []
+    iou_counts = np.zeros(2, 20)
+    eval_dict = {}
+
     if opt.use_proxy_loss:
         model2d_classifier.train()
 
     points, labels, frames = data_util.load_hdf5_data(train_file, num_classes)
-# shape of points: (1000, 8192, 3)
-# shape of labels: (1000, 8192,)
-# shape of frames: (1000, 5,): 0th entry: scene (0000), 1st entry: version of scene(00), 2-4th entry: image ids
+    num_points = points.shape[1]
+    # shape of points: (1000, 8192, 3)
+    # shape of labels: (1000, 8192,)
+    # shape of frames: (1000, 5,): 0th entry: scene (0000), 1st entry: version of scene(00), 2-4th entry: image ids (for 3 images)
     frames = frames[:, :2+num_images]
-    #volumes = volumes.permute(0, 1, 4, 3, 2) 
-# no permutation necessary
+    # volumes = volumes.permute(0, 1, 4, 3, 2)
+    # no permutation necessary
     train_loss_2d = []
     model.train()
     start = time.time()
     model2d_trainable.train()
-    #labels = labels.permute(0, 1, 4, 3, 2)
-# no permutation necessary
+    # labels = labels.permute(0, 1, 4, 3, 2)
+    # no permutation necessary
 
-    #labels = labels[:, 0, :, grid_centerX, grid_centerY]  # center columns as targets
-# not necessary; want to predict every point in cloud
+    # labels = labels[:, 0, :, grid_centerX, grid_centerY]  # center columns as targets
+    # not necessary; want to predict every point in cloud
 
     num_samples = points.shape[0]
-# TODO: concatenate all hdf5 files to one large file
+    # TODO: concatenate all hdf5 files to one large file
     # shuffle
     indices = torch.randperm(num_samples).long().split(batch_size)
     # remove last mini-batch so that all the batches have equal size
     indices = indices[:-1]
 
-    mask = torch.cuda.LongTensor(batch_size*column_height)
+    # initialize Tensors for depth, color, camera pose, labels for projection pass
     depth_images = torch.cuda.FloatTensor(batch_size * num_images, proj_image_dims[1], proj_image_dims[0])
     color_images = torch.cuda.FloatTensor(batch_size * num_images, 3, input_image_dims[1], input_image_dims[0])
     camera_poses = torch.cuda.FloatTensor(batch_size * num_images, 4, 4)
@@ -163,17 +204,15 @@ def train(epoch, iter, log_file, train_file, log_file_2d):
         maskindices = mask.nonzero().squeeze()
         if len(maskindices.shape) == 0:
             continue
-        #transforms = world_to_grids[v].unsqueeze(1)
-        #transforms = transforms.expand(batch_size, num_images, 4, 4).contiguous().view(-1, 4, 4).cuda()
-        # don't need transforms (world_to_grid) anymore
+
         data_util.load_frames_multi(opt.data_path_2d, frames[v], depth_images, color_images, camera_poses, color_mean, color_std)
 
         # compute projection mapping
-        proj_mapping = [projection.compute_projection(d, c, t) for d, c, t in zip(depth_images, camera_poses, transforms)]
-        if None in proj_mapping: #invalid sample
-            #print '(invalid sample)'
+        proj_mapping = [projection.compute_projection(p, d, c, num_points) for d, c, t in zip(points[v], depth_images, camera_poses)]
+        if None in proj_mapping: # invalid sample
+            # print '(invalid sample)'
             continue
-        proj_mapping = zip(*proj_mapping)
+        proj_mapping = list(zip(*proj_mapping))
         proj_ind_3d = torch.stack(proj_mapping[0])
         proj_ind_2d = torch.stack(proj_mapping[1])
 
@@ -193,11 +232,20 @@ def train(epoch, iter, log_file, train_file, log_file_2d):
             ft2d = model2d_classifier(imageft)
             ft2d = ft2d.permute(0, 2, 3, 1).contiguous()
 
-        # 2d/3d
-        input3d = torch.autograd.Variable(volumes[v].cuda())
-        output = model(input3d, imageft, torch.autograd.Variable(proj_ind_3d), torch.autograd.Variable(proj_ind_2d), grid_dims)
+        # counter for learning rate/ bnm scheduler
+        if lr_scheduler is not None:
+            lr_scheduler.step(epoch*iter+iter)
 
-        loss = criterion(output.view(-1, num_classes), targets.view(-1))
+        if bnm_scheduler is not None:
+            bnm_scheduler.step(epoch*iter+iter)
+
+        # 2d/3d
+        input3d = torch.autograd.Variable(points[v].cuda())
+        output = model(input3d, imageft, torch.autograd.Variable(proj_ind_3d), torch.autograd.Variable(proj_ind_2d))
+
+        # loss = criterion(output.view(-1, num_classes), targets.view(-1))
+        _, loss, _ = model_fn(model, (points[v], targets))
+
         train_loss.append(loss.item())
         optimizer.zero_grad()
         optimizer2d.zero_grad()
@@ -226,6 +274,7 @@ def train(epoch, iter, log_file, train_file, log_file_2d):
         _, predictions = y.max(1)
         predictions = predictions.view(-1)
         k = targets.data.view(-1)
+        # computes the confustion matrix
         confusion.add(torch.index_select(predictions, 0, maskindices), torch.index_select(k, 0, maskindices))
         log_file.write(_SPLITTER.join([str(f) for f in [epoch, iter, loss.item()]]) + '\n')
         iter += 1
@@ -247,7 +296,7 @@ def train(epoch, iter, log_file, train_file, log_file_2d):
     evaluate_confusion(confusion, train_loss, epoch, iter, took, 'Train', log_file)
     if opt.use_proxy_loss:
         evaluate_confusion(confusion2d, train_loss_2d, epoch, iter, took, 'Train2d', log_file_2d)
-    return train_loss, iter, train_loss_2d
+    return train_loss, iter, train_loss_2d, eval_dict
 
 
 def test(epoch, iter, log_file, val_file, log_file_2d):
@@ -260,19 +309,17 @@ def test(epoch, iter, log_file, val_file, log_file_2d):
         model2d_classifier.eval()
     start = time.time()
 
-    volumes, labels, frames, world_to_grids = data_util.load_hdf5_data(val_file, num_classes)
+    points, labels, frames = data_util.load_hdf5_data(val_file, num_classes)
+    num_points = points.shape[1]
+
     frames = frames[:, :2+num_images]
-    volumes = volumes.permute(0, 1, 4, 3, 2)
-    labels = labels.permute(0, 1, 4, 3, 2)
-    labels = labels[:, 0, :, grid_centerX, grid_centerY]  # center columns as targets
-    num_samples = volumes.shape[0]
+    num_samples = points.shape[0]
     # shuffle
     indices = torch.randperm(num_samples).long().split(batch_size)
     # remove last mini-batch so that all the batches have equal size
     indices = indices[:-1]
 
     with torch.no_grad():
-        mask = torch.cuda.LongTensor(batch_size*column_height)
         depth_images = torch.cuda.FloatTensor(batch_size * num_images, proj_image_dims[1], proj_image_dims[0])
         color_images = torch.cuda.FloatTensor(batch_size * num_images, 3, input_image_dims[1], input_image_dims[0])
         camera_poses = torch.cuda.FloatTensor(batch_size * num_images, 4, 4)
@@ -289,8 +336,6 @@ def test(epoch, iter, log_file, val_file, log_file_2d):
             if len(maskindices.shape) == 0:
                 continue
 
-            transforms = world_to_grids[v].unsqueeze(1)
-            transforms = transforms.expand(batch_size, num_images, 4, 4).contiguous().view(-1, 4, 4).cuda()
             # get 2d data
             data_util.load_frames_multi(opt.data_path_2d, frames[v], depth_images, color_images, camera_poses, color_mean, color_std)
             if opt.use_proxy_loss:
@@ -302,12 +347,13 @@ def test(epoch, iter, log_file, val_file, log_file_2d):
                 mask2d = mask2d.nonzero().squeeze()
                 if (len(mask2d.shape) == 0):
                     continue  # nothing to optimize for here
+
             # compute projection mapping
-            proj_mapping = [projection.compute_projection(d, c, t) for d, c, t in zip(depth_images, camera_poses, transforms)]
+            proj_mapping = [projection.compute_projection(p, d, c, num_points) for d, c, t in zip(points[v], depth_images, camera_poses)]
             if None in proj_mapping: #invalid sample
                 #print '(invalid sample)'
                 continue
-            proj_mapping = zip(*proj_mapping)
+            proj_mapping = list(zip(*proj_mapping))
             proj_ind_3d = torch.stack(proj_mapping[0])
             proj_ind_2d = torch.stack(proj_mapping[1])
             # 2d
@@ -317,8 +363,8 @@ def test(epoch, iter, log_file, val_file, log_file_2d):
                 ft2d = model2d_classifier(imageft)
                 ft2d = ft2d.permute(0, 2, 3, 1).contiguous()
             # 2d/3d
-            input3d = volumes[v].cuda()
-            output = model(input3d, imageft, proj_ind_3d, proj_ind_2d, grid_dims)
+            input3d = points[v].cuda()
+            output = model(input3d, imageft, proj_ind_3d, proj_ind_2d)
             loss = criterion(output.view(-1, num_classes), targets.view(-1))
             test_loss.append(loss.item())
             if opt.use_proxy_loss:
@@ -352,24 +398,28 @@ def evaluate_confusion(confusion_matrix, loss, epoch, iter, time, which, log_fil
     conf = confusion_matrix.value()
     total_correct = 0
     valids = np.zeros(num_classes, dtype=np.float32)
+    iou = np.zeros(num_classes, dtype=np.float32)
     for c in range(num_classes):
-        num = conf[c,:].sum()
-        valids[c] = -1 if num == 0 else float(conf[c][c]) / float(num)
+        num = conf[c, :].sum() # number of points with ground truth c (TP + TN)
+        valids[c] = -1 if num == 0 else float(conf[c][c]) / float(num) # TP / (TP + TN)
         total_correct += conf[c][c]
+        F = conf[:, c].sum() # number of points predicted to be in class c (FP + FN)
+        iou[c] = 0 if () == 0 else float(conf[c, c]) / float(conf[c, c]+F) # TP / (TP + FP + FN)
     instance_acc = -1 if conf.sum() == 0 else float(total_correct) / float(conf.sum())
     avg_acc = -1 if np.all(np.equal(valids, -1)) else np.mean(valids[np.not_equal(valids, -1)])
-    log_file.write(_SPLITTER.join([str(f) for f in [epoch, iter, torch.mean(torch.Tensor(loss)), avg_acc, instance_acc, time]]) + '\n')
+    mean_iou = np.mean(iou)
+    log_file.write(_SPLITTER.join([str(f) for f in [epoch, iter, torch.mean(torch.Tensor(loss)), avg_acc, instance_acc, mean_iou, time]]) + '\n')
     log_file.flush()
 
-    print('{} Epoch: {}\tIter: {}\tLoss: {:.6f}\tAcc(inst): {:.6f}\tAcc(avg): {:.6f}\tTook: {:.2f}'.format(
-        which, epoch, iter, torch.mean(torch.Tensor(loss)), instance_acc, avg_acc, time))
+    print('{} Epoch: {}\tIter: {}\tLoss: {:.6f}\tAcc(inst): {:.6f}\tAcc(avg): {:.6f}\tmIoU: {:.6f}\tTook: {:.2f}'.format(
+        which, epoch, iter, torch.mean(torch.Tensor(loss)), instance_acc, avg_acc, mean_iou, time))
 
 
 def main():
     if not os.path.exists(opt.output):
         os.makedirs(opt.output)
     log_file = open(os.path.join(opt.output, 'log.csv'), 'w')
-    log_file.write(_SPLITTER.join(['epoch','iter','loss','avg acc', 'instance acc', 'time']) + '\n')
+    log_file.write(_SPLITTER.join(['epoch','iter','loss','avg acc', 'instance acc', 'mIoU', 'time']) + '\n')
     log_file.flush()
     log_file_2d = None
     if opt.use_proxy_loss:
@@ -380,7 +430,7 @@ def main():
     has_val = len(val_files) > 0
     if has_val:
         log_file_val = open(os.path.join(opt.output, 'log_val.csv'), 'w')
-        log_file_val.write(_SPLITTER.join(['epoch', 'iter', 'loss','avg acc', 'instance acc', 'time']) + '\n')
+        log_file_val.write(_SPLITTER.join(['epoch', 'iter', 'loss','avg acc', 'instance acc', 'mIoU', 'time']) + '\n')
         log_file_val.flush()
         log_file_2d_val = None
         if opt.use_proxy_loss:
@@ -396,11 +446,12 @@ def main():
         train2d_loss = []
         val_loss = []
         val2d_loss = []
+
         # go thru shuffled train files
         train_file_indices = torch.randperm(len(train_files))
         for k in range(len(train_file_indices)):
             print('Epoch: {}\tFile: {}/{}\t{}'.format(epoch, k, len(train_files), train_files[train_file_indices[k]]))
-            loss, iter, loss2d = train(epoch, iter, log_file, train_files[train_file_indices[k]], log_file_2d)
+            loss, iter, loss2d, eval_dict = train(epoch, iter, log_file, train_files[train_file_indices[k]], log_file_2d)
             train_loss.extend(loss)
             if loss2d:
                  train2d_loss.extend(loss2d)
