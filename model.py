@@ -4,12 +4,49 @@ import torch
 import torch.nn as nn
 import torch.backends.cudnn as cudnn
 import numpy as np
+from collections import namedtuple
+
 
 import util
 import etw_pytorch_utils as pt_utils
 from projection import Projection
 #from pointnet2_modules import PointnetSAModule, PointnetFPModule
 from pointnet2.utils.pointnet2_modules import PointnetSAModule, PointnetFPModule
+
+
+def model_fn_decorator(criterion):
+    ModelReturn = namedtuple("ModelReturn", ["preds", "loss", "acc"])
+
+    def model_fn(model, data, epoch=0, eval=False):
+        with torch.set_grad_enabled(not eval):
+            inputs, labels = data
+            inputs = inputs.to("cuda", non_blocking=True)
+            labels = labels.to("cuda", non_blocking=True)
+
+            preds = model(inputs)
+            loss = criterion(preds.view(labels.numel(), -1), labels.view(-1))
+
+            _, classes = torch.max(preds, -1)
+
+            acc = (classes[(classes*labels)>0] == labels[(classes*labels)>0]).float().sum() / labels[labels>0].numel()
+
+            miou = list()
+            if eval:
+                for c in range(20):
+                    mask_label = (labels == c+1)
+                    mask_pred = (classes == c+1)
+
+                    true_pos = ((mask_label * mask_pred).sum()).float()
+                    false_pos = ((torch.ones(labels.shape).cuda() - mask_label.float()) * mask_pred.float()).sum()
+                    false_neg = ((torch.ones(labels.shape).cuda() - mask_label.float()) * (torch.ones(labels.shape).cuda() - mask_pred.float())).sum()
+
+                    miou.append((true_pos, true_pos + false_pos + false_neg))
+
+                return ModelReturn(preds, loss, {"acc": acc.item(), "loss": loss.item(), "miou": miou})
+
+            return ModelReturn(preds, loss, {"acc": acc.item(), "loss": loss.item()})
+
+    return model_fn
 
 # z-y-x coordinates
 class Model2d3d(nn.Module):
