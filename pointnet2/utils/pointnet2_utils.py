@@ -8,8 +8,18 @@ from __future__ import (
 import torch
 from torch.autograd import Function
 import torch.nn as nn
-import etw_pytorch_utils as pt_utils
+#import etw_pytorch_utils as pt_utils
 import sys
+
+import os, sys, inspect
+currentdir = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe())))
+print(currentdir)
+print(inspect.getfile(inspect.currentframe()))
+parentdir = os.path.dirname(currentdir)
+print(parentdir)
+sys.path.insert(0, parentdir + '/train')
+
+import etw_pytorch_utils as pt_utils
 
 try:
     import builtins
