@@ -22,15 +22,15 @@ ENET_TYPES = {'scannet': (41, [0.496342, 0.466664, 0.440796], [0.277856, 0.28623
 # params
 parser = argparse.ArgumentParser()
 # data paths
-parser.add_argument('--train_data_list', required=True, help='path to file list of h5 train data')
+parser.add_argument('--train_data_list', required=False, default='/media/lorenzlamm/My Book/processing/final_training_files/hdf5_files.txt', help='path to file list of h5 train data')
 parser.add_argument('--val_data_list', default='', help='path to file list of h5 val data')
 parser.add_argument('--output', default='./logs', help='folder to output model checkpoints')
-parser.add_argument('--data_path_2d', required=True, help='path to 2d train data')
+parser.add_argument('--data_path_2d', required=False, default='/media/lorenzlamm/My Book/Scannet/out_images', help='path to 2d train data')
 parser.add_argument('--class_weight_file', default='', help='path to histogram over classes')
 # train params
 parser.add_argument('--num_classes', default=42, help='#classes')
 parser.add_argument('--gpu', type=int, default=0, help='which gpu to use')
-parser.add_argument('--batch_size', type=int, default=8, help='input batch size')
+parser.add_argument('--batch_size', type=int, default=1, help='input batch size')
 parser.add_argument('--max_epoch', type=int, default=20, help='number of epochs to train for')
 parser.add_argument('--lr', type=float, default=0.001, help='learning rate, default=0.001')
 parser.add_argument('--lr_pointnet', type=float, default=1e-2, help='Initial learning rate for PointNet [default: 1e-2]')
@@ -45,7 +45,7 @@ parser.add_argument('--weight_decay_pointnet', type=float, default=0, help='L2 r
 parser.add_argument('--retrain', default='', help='model to load')
 parser.add_argument('--start_epoch', type=int, default=0, help='start epoch')
 parser.add_argument('--model2d_type', default='scannet', help='which enet (scannet)')
-parser.add_argument('--model2d_path', required=True, help='path to enet model')
+parser.add_argument('--model2d_path', required=False, default='scannetv2_enet.pth', help='path to enet model')
 parser.add_argument('--use_proxy_loss', dest='use_proxy_loss', action='store_true')
 # 2d/3d 
 parser.add_argument('--accuracy', type=float, default=0.05, help='accuracy of point projection (in meters)')
@@ -63,7 +63,7 @@ parser.add_argument('--mx', type=float, default=319.5, help='intrinsics')
 parser.add_argument('--my', type=float, default=239.5, help='intrinsics')
 
 parser.set_defaults(use_proxy_loss=False)
-opt = parser.parse_opt()
+opt = parser.parse_args()
 assert opt.model2d_type in ENET_TYPES
 print(opt)
 
@@ -90,7 +90,7 @@ input_channels = 128
 num_classes = opt.num_classes
 model2d_fixed, model2d_trainable, model2d_classifier = create_enet_for_3d(ENET_TYPES[opt.model2d_type], opt.model2d_path, num_classes)
 model = Model2d3d(num_classes, num_images, input_channels, intrinsic, proj_image_dims, opt.depth_min, opt.depth_max, opt.accuracy)
-projection = ProjectionHelper(intrinsic, opt.depth_min, opt.depth_max, proj_image_dims, grid_dims, opt.accuracy)
+projection = ProjectionHelper(intrinsic, opt.depth_min, opt.depth_max, proj_image_dims, opt.accuracy)
 # create loss
 criterion_weights = torch.ones(num_classes) 
 if opt.class_weight_file:
@@ -98,7 +98,7 @@ if opt.class_weight_file:
 for c in range(num_classes):
     if criterion_weights[c] > 0:
         criterion_weights[c] = 1 / np.log(1.2 + criterion_weights[c])
-print criterion_weights.numpy()
+print(criterion_weights.numpy())
 #raw_input('')
 criterion = torch.nn.CrossEntropyLoss(criterion_weights).cuda()
 criterion2d = torch.nn.CrossEntropyLoss(criterion_weights).cuda()
@@ -145,8 +145,8 @@ model_fn = model_fn_decorator(nn.CrossEntropyLoss())
 # data files
 train_files = util.read_lines_from_file(opt.train_data_list)
 val_files = [] if not opt.val_data_list else util.read_lines_from_file(opt.val_data_list)
-print '#train files = ', len(train_files)
-print '#val files = ', len(val_files)
+print('#train files = ', len(train_files))
+print('#val files = ', len(val_files))
 
 _SPLITTER = ','
 confusion = tnt.meter.ConfusionMeter(num_classes)
@@ -157,8 +157,6 @@ confusion2d_val = tnt.meter.ConfusionMeter(num_classes)
 
 def train(epoch, iter, log_file, train_file, log_file_2d):
     train_loss = []
-    iou_counts = np.zeros(2, 20)
-    eval_dict = {}
 
     if opt.use_proxy_loss:
         model2d_classifier.train()
@@ -207,8 +205,9 @@ def train(epoch, iter, log_file, train_file, log_file_2d):
 
         data_util.load_frames_multi(opt.data_path_2d, frames[v], depth_images, color_images, camera_poses, color_mean, color_std)
 
+        points_projection = torch.repeat_interleave(points[v], num_images, dim=0)
         # compute projection mapping
-        proj_mapping = [projection.compute_projection(p, d, c, num_points) for d, c, t in zip(points[v], depth_images, camera_poses)]
+        proj_mapping = [projection.compute_projection(p, d, c, num_points) for p, d, c in zip(points_projection, depth_images, camera_poses)]
         if None in proj_mapping: # invalid sample
             # print '(invalid sample)'
             continue
@@ -244,7 +243,7 @@ def train(epoch, iter, log_file, train_file, log_file_2d):
         output = model(input3d, imageft, torch.autograd.Variable(proj_ind_3d), torch.autograd.Variable(proj_ind_2d))
 
         # loss = criterion(output.view(-1, num_classes), targets.view(-1))
-        _, loss, _ = model_fn(model, (points[v], targets))
+        _, loss, _ = model_fn(model, (points[v], targets), imageft, torch.autograd.Variable(proj_ind_3d), torch.autograd.Variable(proj_ind_2d))
 
         train_loss.append(loss.item())
         optimizer.zero_grad()
@@ -296,7 +295,7 @@ def train(epoch, iter, log_file, train_file, log_file_2d):
     evaluate_confusion(confusion, train_loss, epoch, iter, took, 'Train', log_file)
     if opt.use_proxy_loss:
         evaluate_confusion(confusion2d, train_loss_2d, epoch, iter, took, 'Train2d', log_file_2d)
-    return train_loss, iter, train_loss_2d, eval_dict
+    return train_loss, iter, train_loss_2d
 
 
 def test(epoch, iter, log_file, val_file, log_file_2d):
@@ -349,7 +348,7 @@ def test(epoch, iter, log_file, val_file, log_file_2d):
                     continue  # nothing to optimize for here
 
             # compute projection mapping
-            proj_mapping = [projection.compute_projection(p, d, c, num_points) for d, c, t in zip(points[v], depth_images, camera_poses)]
+            proj_mapping = [projection.compute_projection(p, d, c, num_points) for p, d, c in zip(points[v], depth_images, camera_poses)]
             if None in proj_mapping: #invalid sample
                 #print '(invalid sample)'
                 continue
@@ -404,7 +403,7 @@ def evaluate_confusion(confusion_matrix, loss, epoch, iter, time, which, log_fil
         valids[c] = -1 if num == 0 else float(conf[c][c]) / float(num) # TP / (TP + TN)
         total_correct += conf[c][c]
         F = conf[:, c].sum() # number of points predicted to be in class c (FP + FN)
-        iou[c] = 0 if () == 0 else float(conf[c, c]) / float(conf[c, c]+F) # TP / (TP + FP + FN)
+        iou[c] = -1 if conf[c, c]+F == 0 else float(conf[c, c]) / float(conf[c, c]+F) # TP / (TP + FP + FN)
     instance_acc = -1 if conf.sum() == 0 else float(total_correct) / float(conf.sum())
     avg_acc = -1 if np.all(np.equal(valids, -1)) else np.mean(valids[np.not_equal(valids, -1)])
     mean_iou = np.mean(iou)
@@ -438,7 +437,7 @@ def main():
             log_file_2d_val.write(_SPLITTER.join(['epoch','iter','loss','avg acc', 'instance acc', 'time']) + '\n')
             log_file_2d_val.flush()
     # start training
-    print 'starting training...'
+    print('starting training...')
     iter = 0
     num_files_per_val = 10
     for epoch in range(opt.max_epoch):
@@ -451,7 +450,7 @@ def main():
         train_file_indices = torch.randperm(len(train_files))
         for k in range(len(train_file_indices)):
             print('Epoch: {}\tFile: {}/{}\t{}'.format(epoch, k, len(train_files), train_files[train_file_indices[k]]))
-            loss, iter, loss2d, eval_dict = train(epoch, iter, log_file, train_files[train_file_indices[k]], log_file_2d)
+            loss, iter, loss2d = train(epoch, iter, log_file, train_files[train_file_indices[k]], log_file_2d)
             train_loss.extend(loss)
             if loss2d:
                  train2d_loss.extend(loss2d)

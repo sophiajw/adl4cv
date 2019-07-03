@@ -2,8 +2,6 @@ import pickle
 import os
 import sys
 import numpy as np
-import pc_util
-import scene_util
 import torch
 import util
 import argparse
@@ -11,21 +9,6 @@ from projection import ProjectionHelper
 from scipy.spatial import ConvexHull
 import h5py
 import random
-
-def pnt_in_pointcloud(points, new_pt):
-    print points
-    hull = ConvexHull(points)
-    new_pts = points + new_pt
-    print new_pts
-    new_hull = ConvexHull(new_pts)
-    print hull == new_hull
-    print hull
-    if hull == new_hull:
-        return True
-    else:
-        return False
-
-
 
 
 ###############
@@ -83,18 +66,23 @@ def findCorrespondingImages(chunksPath, posesPath, outPath, numImgs=3, npoints=8
     #           npoints: number of points in a point cloud
     # output:   Nothing; saves points, labels and poses into .hdf5 file
 
-    print "Finding image correspondences"
-    projection = ProjectionHelper(intrinsic, opt.depth_min, opt.depth_max, proj_image_dims, grid_dims, opt.voxel_size)
+    print ("Finding image correspondences")
+    projection = ProjectionHelper(intrinsic, opt.depth_min, opt.depth_max, proj_image_dims, opt.voxel_size)
 
     fileList = list()
     for file in os.listdir(chunksPath):
-        if file.endswith(".npy") and not file.startswith("006") and not file.startswith("007"):
+        if file.endswith(".npy") and not file.startswith("06") and not file.startswith("07"):
             scene = file[:-4]
             fileList.append(scene)
-    print fileList
+    print (fileList)
     for scene in fileList:
+        if(os.path.isfile(os.path.join(outPath, scene + ".hdf5"))):
+            print("Scene " + scene + " was already processed.")
+            continue
         poseDict = {}
-        print scene
+        print (scene)
+        scene_nr = int(scene[:4])
+        scene_version = int(scene[5:7])
         data = np.load(os.path.join(chunksPath,  scene + ".npy"))
         scene_points = data[:, :3]
         semantic_labels = data[:, 3]
@@ -108,15 +96,18 @@ def findCorrespondingImages(chunksPath, posesPath, outPath, numImgs=3, npoints=8
             poseDict[poseFile[:-4]] = num_valid_points
 
         poseList = list()
+        poseList.append(scene_nr)
+        poseList.append(scene_version)
         for i in range(numImgs):
             maximum = max(poseDict, key=poseDict.get)
-            poseList.append(maximum)
+            poseList.append(int(maximum))
             del poseDict[maximum]
+
 
         h5file = h5py.File(os.path.join(outPath, scene + ".hdf5"), "w")
         dset = h5file.create_dataset("points", (npoints, 3), data=scene_points)
         dset = h5file.create_dataset("labels", (npoints,), data=semantic_labels)
-        dset = h5file.create_dataset("corresponding_images", (numImgs,), data=poseList)
+        dset = h5file.create_dataset("corresponding_images", (numImgs+2,), data=poseList)
         h5file.close()
 
 
@@ -131,7 +122,7 @@ def save_Npy_as_hdf5(chunksPath, out_path, npoints = 8192):
             scene = file[:-4]
             fileList.append(scene)
     for scene in fileList:
-        print scene
+        print (scene)
         data = np.load(os.path.join(chunkPath, scene + ".npy"))
         scene_points = data[:, :3]
         semantic_labels = data[:, 3]
@@ -154,11 +145,11 @@ def findPointCloudsTraining(scenesPath, outPath, npoints = 8192):
 
     fileList = list()
     for file in os.listdir(scenesPath):
-        if file.endswith(".npy"):
+        if file.endswith(".npy") and not file.startswith("06") and not file.startswith("07"):
             scene = file[-11:-4]
             fileList.append(scene)
     for scene in fileList:
-        print scene
+        print (scene)
         data = np.load(os.path.join(scenesPath, "scene" + scene + ".npy"))
         whole_scene_points = data[:, :3]
         semantic_labels = data[:, 7]
@@ -197,6 +188,11 @@ def findPointCloudsTraining(scenesPath, outPath, npoints = 8192):
 #findPointCloudsTraining("pointclouds", "out_scenes")
 
 def combine_to_final_data(in_path, out_path, num_scenes_per_file=1000, npoints=8192, with_images = True):
+    # Puts the single scene chunks into large containers with 1000 scene chunks each (randomly shuffled)
+    # input:    in_path: path where scene chunk files (containing corresponding images) are stored
+    #           out_path: where the output containers should be stored
+    #           with_images: if false: creates containers without image correspondences (can be used for pointnet preprocessing)
+
     fileList = list()
     for file in os.listdir(in_path):
         if file.endswith(".hdf5"):
@@ -204,10 +200,19 @@ def combine_to_final_data(in_path, out_path, num_scenes_per_file=1000, npoints=8
             fileList.append(scene)
     save_number_of_scenes = open(os.path.join(out_path, "scene_count.txt"), "w")
     save_number_of_scenes.write(str(len(fileList)))
-    print len(fileList)
+    print (len(fileList))
     save_number_of_scenes.close()
 
     random.shuffle(fileList)
+    if(not os.path.isfile(os.path.join(in_path, "chunksList.txt"))):
+        with open(os.path.join(in_path, "chunksList.txt"), "w") as f:
+            for entry in fileList:
+                f.write(entry + "\n")
+    fileList = list()
+    with open(os.path.join(in_path, "chunksList.txt"), "r") as f:
+        for line in f:
+            fileList.append(line)
+
     file_count = 0
     scene_count = 0
     out_file = h5py.File(os.path.join(out_path, "scene_container_" + str(file_count)) + ".hdf5", 'w')
@@ -218,12 +223,12 @@ def combine_to_final_data(in_path, out_path, num_scenes_per_file=1000, npoints=8
     for i in range(len(fileList)):
         print(i)
         scene_count += 1
-        in_file = h5py.File(os.path.join(in_path, fileList[i]))
+        in_file = h5py.File(os.path.join(in_path, fileList[i][:-1]), "r")
         if(scene_count == 1):
             in_data = np.expand_dims(in_file['points'], 0)
             in_labels = np.expand_dims(in_file['labels'], 0)
             if(with_images):
-                in_images = np.expand_dims(np.asarray(in_file['image_correspondences']), 0)
+                in_images = np.expand_dims(np.asarray(in_file['corresponding_images']), 0)
         else:
             in_data = np.append(in_data, np.expand_dims(in_file['points'], 0), axis=0)
             #in_data[scene_count] = in_file['points']
@@ -231,14 +236,14 @@ def combine_to_final_data(in_path, out_path, num_scenes_per_file=1000, npoints=8
             #in_labels[scene_count] = in_file['labels']
 
             if (with_images):
-                in_images = np.append(in_images, np.expand_dims(np.asarray(in_file['image_correspondences']), 0), axis=0)
+                in_images = np.append(in_images, np.expand_dims(np.asarray(in_file['corresponding_images']), 0), axis=0)
                 #in_images[scene_count] = np.asarray(in_file['image_correspondences'])
         if(scene_count == num_scenes_per_file):
             print(in_data.shape, in_labels.shape)
             dset = out_file.create_dataset("points", (num_scenes_per_file, npoints, 3), data=in_data)
             dset = out_file.create_dataset("labels", (num_scenes_per_file, npoints), data=in_labels)
             if(with_images):
-                dset = out_file.create_dataset("corresponding_images", (num_scenes_per_file, 3), data=in_images)
+                dset = out_file.create_dataset("corresponding_images", (num_scenes_per_file, 5), data=in_images)
             scene_count = 0
             file_count += 1
             out_file.close()
@@ -247,22 +252,28 @@ def combine_to_final_data(in_path, out_path, num_scenes_per_file=1000, npoints=8
     dset = out_file.create_dataset("points", (scene_count, npoints, 3), data=in_data)
     dset = out_file.create_dataset("labels", (scene_count, npoints), data=in_labels)
     if (with_images):
-        dset = out_file.create_dataset("corresponding_images", (scene_count, 3), data=in_images)
+        dset = out_file.create_dataset("corresponding_images", (scene_count, 5), data=in_images)
 
 scenesPath = "/media/lorenzlamm/My Book/pointnet2/scannet/preprocessing/scannet_scenes"
-chunkPath = "/media/lorenzlamm/Seagate Expansion Drive/ScanNet/sceneChunks2"
-h5Path = "/media/lorenzlamm/Seagate Expansion Drive/ScanNet/h5files2"
-finalPath = "/media/lorenzlamm/Seagate Expansion Drive/ScanNet/finalFiles3DMV_test"
-imgPath = "/media/lorenzlamm/Seagate Expansion Drive/ScanNet/outimages"
+chunkPath = "/media/lorenzlamm/My Book/processing/sceneChunks2"
+h5Path = "/media/lorenzlamm/My Book/processing/h5_with_scenes"
+finalPath = "/media/lorenzlamm/My Book/processing/final_training_files"
+imgPath = "/media/lorenzlamm/My Book/Scannet/out_images"
 outPath = "/media/lorenzlamm/Seagate Expansion Drive/ScanNet/correspondences"
 
-#findCorrespondingImages(chunkPath, imgPath, outPath, numImgs=3, npoints=8192)
+#findCorrespondingImages(chunkPath, imgPath, h5Path, numImgs=3, npoints=8192)
 #findPointCloudsTraining(scenesPath, chunkPath, npoints=8192)
 #save_Npy_as_hdf5(chunkPath, h5Path)
-combine_to_final_data(outPath, finalPath, with_images=False)
+
+file = h5py.File("/media/lorenzlamm/My Book/processing/h5_with_scenes/0340_01_30.hdf5", "r")
+print (file.keys())
+print(file["points"].shape)
+
+
+combine_to_final_data(h5Path, finalPath, with_images=True)
 
 for file in os.listdir(finalPath):
-    print file
+    print (file)
 
 #test = h5py.File(os.path.join(finalPath, "scene_container_0"), 'r')
 #print list(test.keys())

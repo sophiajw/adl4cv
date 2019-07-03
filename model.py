@@ -17,13 +17,13 @@ from pointnet2.utils.pointnet2_modules import PointnetSAModule, PointnetFPModule
 def model_fn_decorator(criterion):
     ModelReturn = namedtuple("ModelReturn", ["preds", "loss", "acc"])
 
-    def model_fn(model, data, epoch=0, eval=False):
+    def model_fn(model, data, imageft, proj_ind_3d, proj_ind_2d, epoch=0, eval=False):
         with torch.set_grad_enabled(not eval):
             inputs, labels = data
             inputs = inputs.to("cuda", non_blocking=True)
             labels = labels.to("cuda", non_blocking=True)
 
-            preds = model(inputs)
+            preds = model(inputs, imageft, proj_ind_3d, proj_ind_2d)
             loss = criterion(preds.view(labels.numel(), -1), labels.view(-1))
 
             _, classes = torch.max(preds, -1)

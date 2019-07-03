@@ -110,8 +110,8 @@ class ProjectionHelper():
         # output: number of point that lie within the frustum
 
         # create vectors from point set to the planes
-        point_to_plane1 = (new_pts - corner_coords[2][:3].view(-1))
-        point_to_plane2 = (new_pts - corner_coords[4][:3].view(-1))
+        point_to_plane1 = (new_pts.cuda() - corner_coords[2][:3].view(-1))
+        point_to_plane2 = (new_pts.cuda() - corner_coords[4][:3].view(-1))
         # check if the scalar product with the normals is positive
 
         masks = list()
@@ -124,6 +124,7 @@ class ProjectionHelper():
             else:
                 masks.append(torch.round(torch.mm(point_to_plane2, normal.unsqueeze(1)) * 100) / (100) < 0)
         mask = torch.ones(point_to_plane1.shape[0]) > 0
+        mask = mask.cuda()
 
         # create a combined mask, which keeps only the points that lie on the correct side of each plane
         for addMask in masks:
@@ -180,7 +181,7 @@ class ProjectionHelper():
         valid_image_ind = valid_image_ind_y * self.image_dims[0] + valid_image_ind_x
 
         # keep only points that are in the correct depth ranges (self.depth_min - self.depth_max)
-        depth_vals = torch.index_select(depth.view(-1), 0, valid_image_ind.cpu())
+        depth_vals = torch.index_select(depth.view(-1), 0, valid_image_ind.cuda())
         depth_mask = depth_vals.cpu().ge(self.depth_min).cpu() * depth_vals.cpu().le(self.depth_max).cpu() * torch.abs(depth_vals.cpu() - camera[2][valid_ind_mask.cpu()]).le(self.accuracy).cpu()
         if not depth_mask.any():
             return None

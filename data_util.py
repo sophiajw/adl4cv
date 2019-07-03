@@ -10,21 +10,22 @@ import util
 import gc
 
 def load_hdf5_data(filename, num_classes):
+    # Changes: made applicable for our project:
+    # 	- adapted for points instead of volumes
+    # 	- removed world-to-grid, which we do not need anymore
     print(filename)
     assert os.path.isfile(filename)
     gc.collect()
 
     with h5py.File(filename, 'r') as f:
-        volumes = f['data'][:].astype(np.float32)
-        labels = f['label'][:]
-        frames = f['frames'][:]
-        world_to_grids = f['world_to_grid'][:]
+        points = f['points'][:].astype(np.float32)
+        labels = f['labels'][:]
+        frames = f['corresponding_images'][:]
     labels[np.greater(labels, num_classes - 1)] = num_classes - 1
-    volumes = torch.from_numpy(volumes)
+    points = torch.from_numpy(points)
     labels = torch.from_numpy(labels.astype(np.int64))
     frames = torch.from_numpy(frames.astype(np.int32))
-    world_to_grids = torch.from_numpy(world_to_grids)
-    return volumes, labels, frames, world_to_grids
+    return points, labels, frames
 
 
 def load_pose(filename):
