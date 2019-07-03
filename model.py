@@ -8,10 +8,10 @@ from collections import namedtuple
 
 
 import util
-import etw_pytorch_utils as pt_utils
+import pointnetPytorch.pointnet2.train.etw_pytorch_utils as pt_utils
 from projection import Projection
 #from pointnet2_modules import PointnetSAModule, PointnetFPModule
-from pointnet2.utils.pointnet2_modules import PointnetSAModule, PointnetFPModule
+from pointnetPytorch.pointnet2.utils.pointnet2_modules import PointnetSAModule, PointnetFPModule
 
 
 def model_fn_decorator(criterion):
