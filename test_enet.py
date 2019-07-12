@@ -5,6 +5,8 @@ from scipy import misc
 import torchvision.transforms as transforms
 import numpy as np
 import matplotlib.pyplot as plt
+import math
+from PIL import Image
 
 from enet import create_enet_for_3d
 
@@ -28,7 +30,9 @@ assert opt.model2d_type in ENET_TYPES
 
 num_classes = opt.num_classes
 model2d_fixed, model2d_trainable, model2d_classifier = create_enet_for_3d(ENET_TYPES[opt.model2d_type], opt.model2d_path, num_classes)
-
+model2d_fixed = model2d_fixed.cuda()
+model2d_trainable = model2d_trainable.cuda()
+model2d_classifier = model2d_classifier.cuda()
 def resize_crop_image(image, new_image_dims):
     image_dims = [image.shape[1], image.shape[0]]
     if image_dims == new_image_dims:
@@ -44,15 +48,18 @@ color_mean = ENET_TYPES[opt.model2d_type][1]
 color_std = ENET_TYPES[opt.model2d_type][2]
 color_images = torch.cuda.FloatTensor(1 * 1, 3, input_image_dims[1], input_image_dims[0])
 
-color_image = misc.imread("/Users/sophia/Documents/Studium/Mathematik/Master/AdvancedDeepLearning4ComputerVision/data/2doutput/scene0000_00/color/840.jpg")
+color_image = misc.imread("/home/lorenzlamm/Dokumente/final_network/adl4cv/840.jpg")
 color_image = resize_crop_image(color_image, input_image_dims)
 color_image = np.transpose(color_image, [2, 0, 1])  # move feature to front
 normalize = transforms.Normalize(mean=color_mean, std=color_std)
 color_image = normalize(torch.Tensor(color_image.astype(np.float32) / 255.0))
 
 imageft_fixed = model2d_fixed(torch.autograd.Variable(color_images))
-plt.plot(imageft_fixed)
+print(imageft_fixed.shape)
+plt.figure()
+plt.imshow(imageft_fixed[0][100].cpu())
 plt.show()
 imageft = model2d_trainable(imageft_fixed)
-plt.plot(imageft)
+plt.figure()
+plt.imshow(imageft[0][100].detach().cpu())
 plt.show()
