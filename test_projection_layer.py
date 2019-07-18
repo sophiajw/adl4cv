@@ -32,7 +32,6 @@ opt = parser.parse_args()
 print(opt)
 
 proj_image_dims = [41, 32]
-grid_dims = [31, 31, 62]
 
 # initialize projection class
 # get intrinsic
@@ -41,29 +40,26 @@ intrinsic = util.adjust_intrinsic(intrinsic, [opt.intrinsic_image_width, opt.int
 
 projection = ProjectionHelper(intrinsic, opt.depth_min, opt.depth_max, proj_image_dims, opt.accuracy)
 
+### compute_projection
 
-# compute_projection
-# get depth_image
+## get depth_image
 batch_size = 1
 num_images = 1
 depth_images = torch.FloatTensor(batch_size * num_images, proj_image_dims[1], proj_image_dims[0])
 # depth_images = torch.cuda.FloatTensor(batch_size * num_images, proj_image_dims[1], proj_image_dims[0])
-
 # load_frames_multi
 scan_name = 'scene0000_00'
-frame_id = 0
+frame_id = 840
 depth_file = os.path.join(opt.data_path_2d, scan_name, 'depth', str(frame_id) + '.png')
 depth_image_dims = [depth_images.shape[2], depth_images.shape[1]]
-
 # load_depth_label_pose
 depth_image = imread(depth_file)
 # preprocess
 depth_image = resize_crop_image(depth_image, depth_image_dims) # resize to proj_iamge (features), i.e. 32x14
 depth_image = depth_image.astype(np.float32) / 1000.0
-
 depth_image = torch.from_numpy(depth_image)
 
-# get camera_pose
+## get camera_pose
 pose_file = os.path.join(opt.data_path_2d, scan_name, 'pose', str(frame_id) + '.txt')
 lines = open(pose_file).read().splitlines()
 assert len(lines) == 4
@@ -73,12 +69,18 @@ camera_pose = torch.from_numpy(np.asarray(lines).astype(np.float32))
 # load point cloud
 input = torch.Tensor(np.load('/Users/sophia/Documents/Studium/Mathematik/Master/AdvancedDeepLearning4ComputerVision/data/scene0000_00.npy'))
 points = input[:, :3]
-np.savetxt('point_cloud_scene0000_00.txt', points, delimiter=',')
+labels = input[:, 7]
+np.savetxt('scene0000_00_labels.txt', torch.cat((points, labels.unsqueeze(1)), dim=1), delimiter=',')
 num_points = points.shape[0]
 
 three_dim, two_dim = projection.compute_projection(points, depth_image, camera_pose, num_points)
 
-# corner_coords = projection.compute_frustum_bounds(camera_pose)
+points_proj = torch.cat((points[three_dim[1:(three_dim[0]+1)]], labels[three_dim[1:(three_dim[0]+1)]].unsqueeze(1)), dim=1)
+np.savetxt('scene_0000_00_840.txt', points_proj, delimiter=',')
+
+corner_coords = projection.compute_frustum_corners(camera_pose)
+np.savetxt('corner_coords_840.txt', corner_coords, delimiter=',')
 # normals = projection.compute_frustum_normals(corner_coords)
 # new_pt = projection.point_in_frustum(corner_coords, normals, corner_coords[4][:3].view(-1))
+
 

@@ -14,6 +14,23 @@ from projection import Projection
 from pointnet2.utils.pointnet2_modules import PointnetSAModule, PointnetFPModule
 
 
+def get_model(num_classes, input_channels=0, use_xyz=True, bn=True):
+    return Pointnet2MSG(
+        num_classes=num_classes,
+        input_channels=input_channels,
+        use_xyz=use_xyz,
+        bn=bn
+    )
+
+NPOINTS = [1024, 256, 64, 16]
+RADIUS = [[0.05, 0.1], [0.1, 0.2], [0.2, 0.4], [0.4, 0.8]]
+NSAMPLE = [[16, 32], [16, 32], [16, 32], [16, 32]]
+MLPS = [[[16, 16, 32], [32, 32, 64]], [[64, 64, 128], [64, 96, 128]],
+        [[128, 196, 256], [128, 196, 256]], [[256, 256, 512], [256, 384, 512]]]
+FP_MLPS = [[128, 128], [256, 256], [512, 512], [512, 512]]
+CLS_FC = [128]
+DP_RATIO = 0.5
+
 def model_fn_decorator(criterion):
     ModelReturn = namedtuple("ModelReturn", ["preds", "loss", "acc"])
 
@@ -48,6 +65,7 @@ def model_fn_decorator(criterion):
 
     return model_fn
 
+
 # z-y-x coordinates
 class Model2d3d(nn.Module):
 
@@ -68,61 +86,53 @@ class Model2d3d(nn.Module):
         # pooling across num_images point clouds
         self.pooling = nn.MaxPool1d(kernel_size=self.num_images)
 
-        # pointnet++ on the point clouds with 2d features
+        # pointnet++
         # set abstraction (SA) layers
         self.SA_modules = nn.ModuleList()
-        self.SA_modules.append(
-            PointnetSAModule(
-                npoint=1024,
-                radius=0.1,
-                nsample=32,
-                mlp=[input_channels, 32, 32, 64],
-                use_xyz=use_xyz,
+        channel_in = input_channels
+
+        skip_channel_list = [input_channels]
+        for k in range(NPOINTS.__len__()):
+            mlps = MLPS[k].copy()
+            channel_out = 0
+            for idx in range(mlps.__len__()):
+                mlps[idx] = [channel_in] + mlps[idx]
+                channel_out += mlps[idx][-1]
+
+            self.SA_modules.append(
+                PointnetSAModuleMSG(
+                    npoint=NPOINTS[k],
+                    radii=RADIUS[k],
+                    nsamples=NSAMPLE[k],
+                    mlps=mlps,
+                    use_xyz=use_xyz,
+                    bn=bn
+                )
             )
-        )
-        self.SA_modules.append(
-            PointnetSAModule(
-                npoint=256,
-                radius=0.2,
-                nsample=32,
-                mlp=[64, 64, 64, 128],
-                use_xyz=use_xyz,
-            )
-        )
-        self.SA_modules.append(
-            PointnetSAModule(
-                npoint=64,
-                radius=0.4,
-                nsample=32,
-                mlp=[128, 128, 128, 256],
-                use_xyz=use_xyz,
-            )
-        )
-        self.SA_modules.append(
-            PointnetSAModule(
-                npoint=16,
-                radius=0.8,
-                nsample=32,
-                mlp=[256, 256, 256, 512],
-                use_xyz=use_xyz,
-            )
-        )
-        
-        # feature propagation to end up with original point cloud (interpolate feature values)
+            skip_channel_list.append(channel_out)
+            channel_in = channel_out
+
+        # feature propagation layer
         self.FP_modules = nn.ModuleList()
-        self.FP_modules.append(
-            PointnetFPModule(mlp=[128 + input_channels, 128, 128, 128])
-        )
-        self.FP_modules.append(PointnetFPModule(mlp=[256 + 64, 256, 128]))
-        self.FP_modules.append(PointnetFPModule(mlp=[256 + 128, 256, 256]))
-        self.FP_modules.append(PointnetFPModule(mlp=[512 + 256, 256, 256]))
-        
-        self.FC_layer = (
-            pt_utils.Seq(128)
-            .conv1d(128, bn=True)
-            .dropout()
-            .conv1d(num_classes, activation=None)
-        )
+
+        for k in range(FP_MLPS.__len__()):
+            pre_channel = FP_MLPS[k + 1][-1] if k + 1 < len(FP_MLPS) else channel_out
+            self.FP_modules.append(
+                PointnetFPModule(
+                    mlp=[pre_channel + skip_channel_list[k]] + FP_MLPS[k],
+                    bn=bn
+                )
+            )
+
+        # classifier
+        cls_layers = []
+        pre_channel = FP_MLPS[0][-1]
+        for k in range(0, CLS_FC.__len__()):
+            cls_layers.append(pt_utils.Conv1d(pre_channel, CLS_FC[k], bn=bn))
+            pre_channel = CLS_FC[k]
+        cls_layers.append(pt_utils.Conv1d(pre_channel, num_classes, activation=None, bn=bn))
+        cls_layers.insert(1, nn.Dropout(0.5))
+        self.cls_layer = nn.Sequential(*cls_layers)
 
     def _break_up_pc(self, pc):
         r"""
@@ -132,7 +142,10 @@ class Model2d3d(nn.Module):
         :return: xyz (B, N, 3), features (B, N, input_channels)
         """
         xyz = pc[..., 0:3].contiguous()
-        features = pc[..., 3:].transpose(1, 2).contiguous() if pc.size(-1) > 3 else None
+        features = (
+            pc[..., 3:].transpose(1, 2).contiguous()
+            if pc.size(-1) > 3 else None
+        )
 
         return xyz, features
 
@@ -174,19 +187,19 @@ class Model2d3d(nn.Module):
 
         # split point cloud into coordinates and features
         xyz, features = self._break_up_pc(concatenated_cloud)
-        
-         # set abstraction layers
         l_xyz, l_features = [xyz], [features]
+        # set abstraction
         for i in range(len(self.SA_modules)):
-             li_xyz, li_features = self.SA_modules[i](l_xyz[i], l_features[i])  # input of forward pass: xyz, featuers
-             l_xyz.append(li_xyz)
-             l_features.append(li_features)
-        
-         # feature propagation layers
+            li_xyz, li_features = self.SA_modules[i](l_xyz[i], l_features[i])
+            l_xyz.append(li_xyz)
+            l_features.append(li_features)
+
+        # feature propagation
         for i in range(-1, -(len(self.FP_modules) + 1), -1):
-             l_features[i - 1] = self.FP_modules[i](
-                 l_xyz[i - 1], l_xyz[i], l_features[i - 1], l_features[i]
-             )
+            l_features[i - 1] = self.FP_modules[i](
+                l_xyz[i - 1], l_xyz[i], l_features[i - 1], l_features[i]
+            )
 
         # classifier
-        return self.FC_layer(l_features[0]).transpose(1, 2).contiguous()
+        pred_cls = self.cls_layer(l_features[0]).transpose(1, 2).contiguous()  # (B, N, num_classes)
+        return pred_cls

@@ -3,10 +3,14 @@ import argparse
 import os, sys, inspect, time
 import random
 import torch
+import importlib
 import torch.nn as nn
+import torch.optim as optim
 import torchnet as tnt
 import torch.optim.lr_scheduler as lr_sched
 import numpy as np
+from datetime import datetime
+from torch.utils.data import DataLoader
 import itertools
 
 import util
@@ -15,6 +19,14 @@ from model import Model2d3d
 from model import model_fn_decorator
 from enet import create_enet_for_3d
 from projection import ProjectionHelper
+from data.Indoor3DSemSegLoader import Indoor3DSemSeg
+
+
+sys.path.append(".")
+from lib.solver import Solver
+from lib.dataset import ScannetDataset, ScannetDatasetWholeScene, collate_random, collate_wholescene
+from lib.loss import WeightedCrossEntropyLoss
+from lib.config import CONF
 
 
 ENET_TYPES = {'scannet': (41, [0.496342, 0.466664, 0.440796], [0.277856, 0.28623, 0.291129])}  #classes, color mean/std 
@@ -23,6 +35,7 @@ ENET_TYPES = {'scannet': (41, [0.496342, 0.466664, 0.440796], [0.277856, 0.28623
 parser = argparse.ArgumentParser()
 # data paths
 parser.add_argument('--train_data_list', required=False, default='/media/lorenzlamm/My Book/processing/final_training_files/hdf5_files.txt', help='path to file list of h5 train data')
+parser.add_argument('--input_folder_3d', required=False, default='/workspace/beachnet_train/bn_train_data')
 parser.add_argument('--val_data_list', default='', help='path to file list of h5 val data')
 parser.add_argument('--output', default='./logs', help='folder to output model checkpoints')
 parser.add_argument('--data_path_2d', required=False, default='/media/lorenzlamm/My Book/Scannet/out_images', help='path to 2d train data')
@@ -33,8 +46,9 @@ parser.add_argument('--gpu', type=int, default=0, help='which gpu to use')
 parser.add_argument('--batch_size', type=int, default=1, help='input batch size')
 parser.add_argument('--max_epoch', type=int, default=20, help='number of epochs to train for')
 parser.add_argument('--lr', type=float, default=0.001, help='learning rate, default=0.001')
-parser.add_argument('--lr_pointnet', type=float, default=1e-2, help='Initial learning rate for PointNet [default: 1e-2]')
+parser.add_argument('--lr_pointnet', type=float, default=1e-3, help='Initial learning rate for PointNet [default: 1e-2]')
 parser.add_argument("--lr_decay", type=float, default=0.5, help="Learning rate decay gamma [default: 0.5]")
+parser.agg.argument("--lr_decay_pn", type=float, default=0.7, help="Learning rate decay [0.7 from pointnet++ paper]")
 parser.add_argument("--decay_step", type=float, default=2e5, help="Learning rate decay step [default: 20]")
 parser.add_argument("--bn_momentum", type=float, default=0.9, help="Initial batch norm momentum [default: 0.9")
 parser.add_argument("--bn_decay", type=float, default=0.5, help="Batch norm momentum decay gamma [default: 0.5]")
@@ -67,6 +81,33 @@ opt = parser.parse_args()
 assert opt.model2d_type in ENET_TYPES
 print(opt)
 
+def get_num_params(model):
+    model_parameters = filter(lambda p: p.requires_grad, model.parameters())
+    num_params = int(sum([np.prod(p.size()) for p in model_parameters]))
+
+    return num_params
+
+def get_solver(args, dataloader, stamp, weight, is_wholescene):
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'pointnet2/'))
+    Pointnet = importlib.import_module("pointnet2_msg_semseg")
+
+    model = Pointnet.get_model(num_classes=21).cuda()
+    num_params = get_num_params(model)
+    criterion = WeightedCrossEntropyLoss()
+    optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.wd)
+    solver = Solver(model, dataloader, criterion, optimizer, args.batch_size, stamp, is_wholescene)
+
+    return solver, num_params
+
+def save_info(args, root, train_examples, val_examples, num_params):
+    info = {}
+    for key, value in vars(args).items():
+        info[key] = value
+
+    info["num_train"] = train_examples
+    info["num_val"] = val_examples
+    info["num_params"] = num_params
+
 # specify gpu
 os.environ['CUDA_VISIBLE_DEVICES']=str(opt.gpu)
 
@@ -86,7 +127,7 @@ color_mean = ENET_TYPES[opt.model2d_type][1]
 color_std = ENET_TYPES[opt.model2d_type][2]
 input_channels = 128
 
-# create enet and pointnet models
+# create enet and pointnet++ models
 num_classes = opt.num_classes
 model2d_fixed, model2d_trainable, model2d_classifier = create_enet_for_3d(ENET_TYPES[opt.model2d_type], opt.model2d_path, num_classes)
 model = Model2d3d(num_classes, num_images, input_channels, intrinsic, proj_image_dims, opt.depth_min, opt.depth_max, opt.accuracy)
@@ -100,7 +141,8 @@ for c in range(num_classes):
         criterion_weights[c] = 1 / np.log(1.2 + criterion_weights[c])
 print(criterion_weights.numpy())
 #raw_input('')
-criterion = torch.nn.CrossEntropyLoss(criterion_weights).cuda()
+criterion = WeightedCrossEntropyLoss()
+#criterion = torch.nn.CrossEntropyLoss(criterion_weights).cuda()
 criterion2d = torch.nn.CrossEntropyLoss(criterion_weights).cuda()
 
 # move to gpu
@@ -117,36 +159,49 @@ optimizer2d = torch.optim.SGD(model2d_trainable.parameters(), lr=opt.lr, momentu
 if opt.use_proxy_loss:
     optimizer2dc = torch.optim.SGD(model2d_classifier.parameters(), lr=opt.lr, momentum=opt.momentum, weight_decay=opt.weight_decay)
 
-# set up learning rate/ bnm scheduler for pointnet++
-lr_clip = 1e-5
-bnm_clip = 1e-2
-lr_lbmd = lambda it: max(
-        opt.lr_decay ** (int(it * opt.batch_size / opt.decay_step)),
-        lr_clip / opt.lr,
-    )
-bnm_lmbd = lambda it: max(
-    opt.bn_momentum
-    * opt.bn_decay ** (int(it * opt.batch_size / opt.decay_step)),
-    bnm_clip,
-)
-
-it = -1  # for the initialize value of `LambdaLR` and `BNMomentumScheduler`
-
-lr_scheduler = lr_sched.LambdaLR(optimizer, lr_lambda=lr_lbmd, last_epoch=it)
-bnm_scheduler = util.BNMomentumScheduler(model, bn_lambda=bnm_lmbd, last_epoch=it)
-
-it = max(it, 0)  # for the initialize value of `trainer.train`
-
-# TODO implement loading from checkpoints
-
-# function to compute accuracy and miou in pointnet
+# function to compute accuracy and miou in pointnet++
 model_fn = model_fn_decorator(nn.CrossEntropyLoss())
 
-# data files
-train_files = util.read_lines_from_file(opt.train_data_list)
-val_files = [] if not opt.val_data_list else util.read_lines_from_file(opt.val_data_list)
-print('#train files = ', len(train_files))
-print('#val files = ', len(val_files))
+# load data
+# pointnet++
+if opt.wholescene:
+    is_wholescene = True
+else:
+    is_wholescene = False
+train_dataset = Indoor3DSemSeg(4096, root=opt.input_folder_3d, train=True)
+val_dataset = Indoor3DSemSeg(4096, root=opt.input_folder_3d, train=False)
+val_dataloader = DataLoader(
+    val_dataset,
+    batch_size=opt.batch_size,
+    shuffle=True,
+    pin_memory=True,
+    num_workers=2
+)
+train_dataloader = DataLoader(
+    train_dataset,
+    batch_size=opt.batch_size,
+    pin_memory=True,
+    num_workers=2,
+    shuffle=True
+)
+dataloader = {
+    "train": train_dataloader,
+    "val": val_dataloader
+}
+weight = train_dataset.labelweights
+train_examples = len(train_dataset)
+val_examples = len(val_dataset)
+
+print("initializing...")
+stamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+root = os.path.join(CONF.OUTPUT_ROOT, stamp)
+os.makedirs(root, exist_ok=True)
+solver, num_params = get_solver(opt, dataloader, stamp, weight, is_wholescene)
+
+# train_files = util.read_lines_from_file(opt.train_data_list)
+# val_files = [] if not opt.val_data_list else util.read_lines_from_file(opt.val_data_list)
+# print('#train files = ', len(train_files))
+# print('#val files = ', len(val_files))
 
 _SPLITTER = ','
 confusion = tnt.meter.ConfusionMeter(num_classes)
@@ -154,6 +209,11 @@ confusion2d = tnt.meter.ConfusionMeter(num_classes)
 confusion_val = tnt.meter.ConfusionMeter(num_classes)
 confusion2d_val = tnt.meter.ConfusionMeter(num_classes)
 
+print("\n[info]")
+print("Train examples: {}".format(train_examples))
+print("Evaluation examples: {}".format(val_examples))
+print("Start training...\n")
+save_info(opt, root, train_examples, val_examples, num_params)
 
 def train(epoch, iter, log_file, train_file, log_file_2d):
     train_loss = []
@@ -192,8 +252,9 @@ def train(epoch, iter, log_file, train_file, log_file_2d):
     camera_poses = torch.cuda.FloatTensor(batch_size * num_images, 4, 4)
     label_images = torch.cuda.LongTensor(batch_size * num_images, proj_image_dims[1], proj_image_dims[0])
 
-    for t,v in enumerate(indices):
-        targets = torch.autograd.Variable(labels[v].cuda())
+    for t, data in enumerate(train_dataloader):
+        points, targets, frames = data
+        # targets = torch.autograd.Variable(labels[v].cuda())
         # valid targets
         mask = targets.view(-1).data.clone()
         for k in range(num_classes):
@@ -203,9 +264,9 @@ def train(epoch, iter, log_file, train_file, log_file_2d):
         if len(maskindices.shape) == 0:
             continue
 
-        data_util.load_frames_multi(opt.data_path_2d, frames[v], depth_images, color_images, camera_poses, color_mean, color_std)
+        data_util.load_frames_multi(opt.data_path_2d, frames, depth_images, color_images, camera_poses, color_mean, color_std)
 
-        points_projection = torch.repeat_interleave(points[v], num_images, dim=0)
+        points_projection = torch.repeat_interleave(points, num_images, dim=0)
         # compute projection mapping
         proj_mapping = [projection.compute_projection(p, d, c, num_points) for p, d, c in zip(points_projection, depth_images, camera_poses)]
         if None in proj_mapping: # invalid sample
@@ -216,7 +277,7 @@ def train(epoch, iter, log_file, train_file, log_file_2d):
         proj_ind_2d = torch.stack(proj_mapping[1])
 
         if opt.use_proxy_loss:
-            data_util.load_label_frames(opt.data_path_2d, frames[v], label_images, num_classes)
+            data_util.load_label_frames(opt.data_path_2d, frames, label_images, num_classes)
             mask2d = label_images.view(-1).clone()
             for k in range(num_classes):
                 if criterion_weights[k] == 0:
@@ -231,19 +292,16 @@ def train(epoch, iter, log_file, train_file, log_file_2d):
             ft2d = model2d_classifier(imageft)
             ft2d = ft2d.permute(0, 2, 3, 1).contiguous()
 
-        # counter for learning rate/ bnm scheduler
-        if lr_scheduler is not None:
-            lr_scheduler.step(epoch*iter+iter)
-
-        if bnm_scheduler is not None:
-            bnm_scheduler.step(epoch*iter+iter)
-
         # 2d/3d
-        input3d = torch.autograd.Variable(points[v].cuda())
+        input3d = torch.autograd.Variable(points.cuda())
         output = model(input3d, imageft, torch.autograd.Variable(proj_ind_3d), torch.autograd.Variable(proj_ind_2d))
 
+        pred = output
+        num_classes = pred.size(2)
+        loss = criterion(pred.contiguous().view(-1, num_classes), targets.view(-1), weight.view(-1))
+
         # loss = criterion(output.view(-1, num_classes), targets.view(-1))
-        _, loss, _ = model_fn(model, (points[v], targets), imageft, torch.autograd.Variable(proj_ind_3d), torch.autograd.Variable(proj_ind_2d))
+        # _, loss, _ = model_fn(model, (points, targets), imageft, torch.autograd.Variable(proj_ind_3d), torch.autograd.Variable(proj_ind_2d))
 
         train_loss.append(loss.item())
         optimizer.zero_grad()
@@ -403,7 +461,7 @@ def evaluate_confusion(confusion_matrix, loss, epoch, iter, time, which, log_fil
         valids[c] = -1 if num == 0 else float(conf[c][c]) / float(num) # TP / (TP + TN)
         total_correct += conf[c][c]
         F = conf[:, c].sum() # number of points predicted to be in class c (FP + FN)
-        iou[c] = -1 if conf[c, c]+F == 0 else float(conf[c, c]) / float(conf[c, c]+F) # TP / (TP + FP + FN)
+        iou[c] = 0 if conf[c, c]+F == 0 else float(conf[c, c]) / float(conf[c, c]+F) # TP / (TP + FP + FN)
     instance_acc = -1 if conf.sum() == 0 else float(total_correct) / float(conf.sum())
     avg_acc = -1 if np.all(np.equal(valids, -1)) else np.mean(valids[np.not_equal(valids, -1)])
     mean_iou = np.mean(iou)
@@ -426,7 +484,7 @@ def main():
         log_file_2d.write(_SPLITTER.join(['epoch','iter','loss','avg acc', 'instance acc', 'time']) + '\n')
         log_file_2d.flush()
 
-    has_val = len(val_files) > 0
+    has_val = len(val_dataset) > 0
     if has_val:
         log_file_val = open(os.path.join(opt.output, 'log_val.csv'), 'w')
         log_file_val.write(_SPLITTER.join(['epoch', 'iter', 'loss','avg acc', 'instance acc', 'mIoU', 'time']) + '\n')
@@ -447,16 +505,16 @@ def main():
         val2d_loss = []
 
         # go thru shuffled train files
-        train_file_indices = torch.randperm(len(train_files))
-        for k in range(len(train_file_indices)):
-            print('Epoch: {}\tFile: {}/{}\t{}'.format(epoch, k, len(train_files), train_files[train_file_indices[k]]))
-            loss, iter, loss2d = train(epoch, iter, log_file, train_files[train_file_indices[k]], log_file_2d)
+        #train_file_indices = torch.randperm(len(train_files))
+        for k in range(len(train_dataloader)):
+            print('Epoch: {}\tFile: {}/{}\t{}'.format(epoch, k, len(train_dataloader), train_dataloader))
+            loss, iter, loss2d = train(epoch, iter, log_file, train_dataloader, log_file_2d)
             train_loss.extend(loss)
             if loss2d:
                  train2d_loss.extend(loss2d)
             if has_val and k % num_files_per_val == 0:
-                val_index = torch.randperm(len(val_files))[0]
-                loss, loss2d = test(epoch, iter, log_file_val, val_files[val_index], log_file_2d_val)
+                # val_index = torch.randperm(len(val_dataloader))[0]
+                loss, loss2d = test(epoch, iter, log_file_val, val_dataloader, log_file_2d_val)
                 val_loss.extend(loss)
                 if loss2d:
                      val2d_loss.extend(loss2d)

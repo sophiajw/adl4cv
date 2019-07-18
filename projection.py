@@ -130,7 +130,7 @@ class ProjectionHelper():
         for addMask in masks:
             mask = mask * addMask.squeeze()
 
-        if return_mask == False:
+        if not return_mask:
             return torch.sum(mask)
         else:
             return mask
