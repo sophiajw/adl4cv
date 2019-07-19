@@ -219,6 +219,7 @@ save_info(opt, root, train_examples, val_examples, num_params)
 
 def train(epoch, iter, log_file, train_file, log_file_2d):
     train_loss = []
+    num_classes = opt.num_classes # idk why this is necessary, otherwise num_classes is referenced before assignment
 
     if opt.use_proxy_loss:
         model2d_classifier.train()
