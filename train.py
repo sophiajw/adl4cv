@@ -59,7 +59,7 @@ parser.add_argument('--weight_decay_pointnet', type=float, default=0, help='L2 r
 parser.add_argument('--retrain', default='', help='model to load')
 parser.add_argument('--start_epoch', type=int, default=0, help='start epoch')
 parser.add_argument('--model2d_type', default='scannet', help='which enet (scannet)')
-parser.add_argument('--model2d_path', required=False, default='scannetv2_enet.pth', help='path to enet model')
+parser.add_argument('--model2d_path', required=False, default='/workspace/beachnet_train/bn_train_data/scannetv2_enet.pth', help='path to enet model')
 parser.add_argument('--use_proxy_loss', dest='use_proxy_loss', action='store_true')
 # 2d/3d 
 parser.add_argument('--accuracy', type=float, default=0.05, help='accuracy of point projection (in meters)')
