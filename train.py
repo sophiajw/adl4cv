@@ -255,7 +255,7 @@ def train(epoch, iter, log_file, train_file, log_file_2d):
     label_images = torch.cuda.LongTensor(batch_size * num_images, proj_image_dims[1], proj_image_dims[0])
 
     for t, data in enumerate(train_dataloader):
-        points, test, labels, frames, weights, fetch_time = data
+        points, test, targets, frames, weights, fetch_time = data
         # targets = torch.autograd.Variable(labels[v].cuda())
         # valid targets
         mask = targets.view(-1).data.clone()
