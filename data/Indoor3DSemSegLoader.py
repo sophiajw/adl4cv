@@ -153,9 +153,7 @@ class Indoor3DSemSeg(data.Dataset):
         current_labels = torch.from_numpy(self.labels[idx, pt_idxs].copy()).type(
             torch.LongTensor
         )
-        current_frames = torch.from_numpy(self.frames[idx, pt_idxs].copy()).type(
-            torch.LongTensor
-        )
+        current_frames = torch.from_numpy(self.frames[idx])
         fetch_time = time.time() - start
 
 

@@ -95,8 +95,8 @@ def get_solver(args, dataloader, stamp, weight, is_wholescene):
     model = Pointnet.get_model(num_classes=21).cuda()
     num_params = get_num_params(model)
     criterion = WeightedCrossEntropyLoss()
-    optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.wd)
-    solver = Solver(model, dataloader, criterion, optimizer, args.batch_size, stamp, is_wholescene)
+    optimizer = optim.Adam(model.parameters(), lr=opt.lr_pointnet, weight_decay=opt.weight_decay)
+    solver = Solver(model, dataloader, criterion, optimizer, opt.batch_size, stamp, is_wholescene)
 
     return solver, num_params
 
@@ -170,8 +170,8 @@ model_fn = model_fn_decorator(nn.CrossEntropyLoss())
 #     is_wholescene = True
 # else:
 is_wholescene = False
-train_dataset = Indoor3DSemSeg(4096, root=opt.input_folder_3d, train=True)
-val_dataset = Indoor3DSemSeg(4096, root=opt.input_folder_3d, train=False)
+train_dataset = Indoor3DSemSeg(num_points, root=opt.input_folder_3d, train=True)
+val_dataset = Indoor3DSemSeg(num_points, root=opt.input_folder_3d, train=False)
 val_dataloader = DataLoader(
     val_dataset,
     batch_size=opt.batch_size,
