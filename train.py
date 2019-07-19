@@ -48,7 +48,7 @@ parser.add_argument('--max_epoch', type=int, default=20, help='number of epochs 
 parser.add_argument('--lr', type=float, default=0.001, help='learning rate, default=0.001')
 parser.add_argument('--lr_pointnet', type=float, default=1e-3, help='Initial learning rate for PointNet [default: 1e-2]')
 parser.add_argument("--lr_decay", type=float, default=0.5, help="Learning rate decay gamma [default: 0.5]")
-parser.agg.argument("--lr_decay_pn", type=float, default=0.7, help="Learning rate decay [0.7 from pointnet++ paper]")
+parser.add_argument("--lr_decay_pn", type=float, default=0.7, help="Learning rate decay [0.7 from pointnet++ paper]")
 parser.add_argument("--decay_step", type=float, default=2e5, help="Learning rate decay step [default: 20]")
 parser.add_argument("--bn_momentum", type=float, default=0.9, help="Initial batch norm momentum [default: 0.9")
 parser.add_argument("--bn_decay", type=float, default=0.5, help="Batch norm momentum decay gamma [default: 0.5]")
