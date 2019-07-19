@@ -81,6 +81,7 @@ class Model2d3d(nn.Module):
         self.accuracy = accuracy # originally: voxel size
         # added for pointnet++ (Whether or not to use the xyz position of a point as a feature)
         use_xyz = True
+        bn=True
 
         # pooling across num_images point clouds
         self.pooling = nn.MaxPool1d(kernel_size=self.num_images)
