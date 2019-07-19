@@ -8,10 +8,9 @@ from collections import namedtuple
 
 
 import util
-import pointnet2.train.etw_pytorch_utils as pt_utils
 from projection import Projection
-#from pointnet2_modules import PointnetSAModule, PointnetFPModule
-from pointnet2.utils.pointnet2_modules import PointnetSAModule, PointnetFPModule
+from pointnet2_modules import PointnetFPModule, PointnetSAModuleMSG
+import pytorch_utils as pt_utils
 
 
 def get_model(num_classes, input_channels=0, use_xyz=True, bn=True):
