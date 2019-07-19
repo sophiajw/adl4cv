@@ -15,7 +15,7 @@ import shlex
 import time
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-BASE_DIR = "/content/pointnet_train"
+BASE_DIR = "/content/beachnet_train"
 
 def _get_data_files(list_filename):
     with open(list_filename) as f:
@@ -35,7 +35,7 @@ class Indoor3DSemSeg(data.Dataset):
         super().__init__()
         BASE_DIR = root
         self.data_precent = data_precent
-        self.folder = "pn_train_data"
+        self.folder = "bn_train_data"
         self.data_dir = os.path.join(BASE_DIR, self.folder)
         self.url = (
             "https://shapenet.cs.stanford.edu/media/indoor3d_sem_seg_hdf5_data.zip"
