@@ -164,10 +164,10 @@ model_fn = model_fn_decorator(nn.CrossEntropyLoss())
 
 # load data
 # pointnet++
-if opt.wholescene:
-    is_wholescene = True
-else:
-    is_wholescene = False
+# if opt.wholescene:
+#     is_wholescene = True
+# else:
+is_wholescene = False
 train_dataset = Indoor3DSemSeg(4096, root=opt.input_folder_3d, train=True)
 val_dataset = Indoor3DSemSeg(4096, root=opt.input_folder_3d, train=False)
 val_dataloader = DataLoader(
