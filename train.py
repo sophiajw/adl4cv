@@ -38,7 +38,7 @@ parser.add_argument('--train_data_list', required=False, default='/media/lorenzl
 parser.add_argument('--input_folder_3d', required=False, default='/workspace/beachnet_train/bn_train_data')
 parser.add_argument('--val_data_list', default='', help='path to file list of h5 val data')
 parser.add_argument('--output', default='./logs', help='folder to output model checkpoints')
-parser.add_argument('--data_path_2d', required=False, default='/media/lorenzlamm/My Book/Scannet/out_images', help='path to 2d train data')
+parser.add_argument('--data_path_2d', required=False, default='/workspace/beachnet_train/bn_train_data/2doutput', help='path to 2d train data')
 parser.add_argument('--class_weight_file', default='', help='path to histogram over classes')
 # train params
 parser.add_argument('--num_classes', default=42, help='#classes')
