@@ -61,6 +61,7 @@ parser.add_argument('--start_epoch', type=int, default=0, help='start epoch')
 parser.add_argument('--model2d_type', default='scannet', help='which enet (scannet)')
 parser.add_argument('--model2d_path', required=False, default='/workspace/beachnet_train/bn_train_data/scannetv2_enet.pth', help='path to enet model')
 parser.add_argument('--use_proxy_loss', dest='use_proxy_loss', action='store_true')
+parser.add_argument('--num_points', default=4096, help='number of points in one sample')
 # 2d/3d 
 parser.add_argument('--accuracy', type=float, default=0.05, help='accuracy of point projection (in meters)')
 parser.add_argument('--grid_dimX', type=int, default=31, help='3d grid dim x')
@@ -126,6 +127,7 @@ grid_centerY = opt.grid_dimY // 2
 color_mean = ENET_TYPES[opt.model2d_type][1]
 color_std = ENET_TYPES[opt.model2d_type][2]
 input_channels = 128
+num_points = opt.num_points
 
 # create enet and pointnet++ models
 num_classes = opt.num_classes
@@ -221,12 +223,12 @@ def train(epoch, iter, log_file, train_file, log_file_2d):
     if opt.use_proxy_loss:
         model2d_classifier.train()
 
-    points, labels, frames = data_util.load_hdf5_data(train_file, num_classes)
-    num_points = points.shape[1]
+    #points, labels, frames = data_util.load_hdf5_data(train_file, num_classes)
+    #num_points = points.shape[1]
     # shape of points: (1000, 8192, 3)
     # shape of labels: (1000, 8192,)
     # shape of frames: (1000, 5,): 0th entry: scene (0000), 1st entry: version of scene(00), 2-4th entry: image ids (for 3 images)
-    frames = frames[:, :2+num_images]
+    #frames = frames[:, :2+num_images]
     # volumes = volumes.permute(0, 1, 4, 3, 2)
     # no permutation necessary
     train_loss_2d = []
@@ -239,12 +241,12 @@ def train(epoch, iter, log_file, train_file, log_file_2d):
     # labels = labels[:, 0, :, grid_centerX, grid_centerY]  # center columns as targets
     # not necessary; want to predict every point in cloud
 
-    num_samples = points.shape[0]
+    #num_samples = points.shape[0]
     # TODO: concatenate all hdf5 files to one large file
     # shuffle
-    indices = torch.randperm(num_samples).long().split(batch_size)
+    #indices = torch.randperm(num_samples).long().split(batch_size)
     # remove last mini-batch so that all the batches have equal size
-    indices = indices[:-1]
+    #indices = indices[:-1]
 
     # initialize Tensors for depth, color, camera pose, labels for projection pass
     depth_images = torch.cuda.FloatTensor(batch_size * num_images, proj_image_dims[1], proj_image_dims[0])
