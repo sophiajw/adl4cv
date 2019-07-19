@@ -229,7 +229,7 @@ class Projection(Function):
     def backward(ctx, grad_output):
         grad_label = grad_output.clone()
         num_ft = grad_output.shape[0]
-        grad_label.data.resize_(num_ft, 32, 41)
+        grad_label.resize_(num_ft, 32, 41)
         lin_indices_3d, lin_indices_2d = ctx.saved_variables
         num_ind = lin_indices_3d.data[0]
         vals = torch.index_select(grad_output.data.contiguous().view(num_ft, -1), 1, lin_indices_3d.data[1:1+num_ind])

@@ -28,7 +28,46 @@ from lib.dataset import ScannetDataset, ScannetDatasetWholeScene, collate_random
 from lib.loss import WeightedCrossEntropyLoss
 from lib.config import CONF
 
-ENET_TYPES = {'scannet': (41, [0.496342, 0.466664, 0.440796], [0.277856, 0.28623, 0.291129])}  #classes, color mean/std
+log = {phase: {} for phase in ["train", "val"]}
+ENET_TYPES = {'scannet': (41, [0.496342, 0.466664, 0.440796], [0.277856, 0.28623, 0.291129])}  #classes, color mean/std 
+global_iter_id = 0
+total_iter = {}
+
+
+ITER_REPORT_TEMPLATE = """
+----------------------iter: [{global_iter_id}/{total_iter}]----------------------
+[loss] train_loss: {train_loss}
+[sco.] train_acc: {train_acc}
+[sco.] train_miou: {train_miou}
+[info] mean_fetch_time: {mean_fetch_time}s
+[info] mean_forward_time: {mean_forward_time}s
+[info] mean_backward_time: {mean_backward_time}s
+[info] mean_iter_time: {mean_iter_time}s
+"""
+
+EPOCH_REPORT_TEMPLATE = """
+------------------------summary------------------------
+[train] train_loss: {train_loss}
+[train] train_acc: {train_acc}
+[train] train_miou: {train_miou}
+[val]   val_loss: {val_loss}
+[val]   val_acc: {val_acc}
+[val]   val_miou: {val_miou}
+"""
+
+BEST_REPORT_TEMPLATE = """
+-----------------------------best-----------------------------
+[best] epoch: {epoch}
+[loss] loss: {loss}
+[sco.] acc: {acc}
+[sco.] miou: {miou}
+"""
+
+iter_report_template = ITER_REPORT_TEMPLATE
+epoch_report_template = EPOCH_REPORT_TEMPLATE
+best_report_template = BEST_REPORT_TEMPLATE
+
+
 
 
 # params
@@ -44,7 +83,7 @@ parser.add_argument('--class_weight_file', default='', help='path to histogram o
 parser.add_argument('--num_classes', default=21, help='#classes')
 parser.add_argument('--gpu', type=int, default=0, help='which gpu to use')
 parser.add_argument('--batch_size', type=int, default=1, help='input batch size')
-parser.add_argument('--max_epoch', type=int, default=20, help='number of epochs to train for')
+parser.add_argument('--max_epoch', type=int, default=50, help='number of epochs to train for')
 parser.add_argument('--lr', type=float, default=0.001, help='learning rate, default=0.001')
 parser.add_argument('--lr_pointnet', type=float, default=1e-3, help='Initial learning rate for PointNet [default: 1e-2]')
 parser.add_argument("--lr_decay", type=float, default=0.5, help="Learning rate decay gamma [default: 0.5]")
@@ -218,50 +257,68 @@ print("Start training...\n")
 save_info(opt, root, train_examples, val_examples, num_params)
 
 def train(epoch, iter, log_file, train_file, log_file_2d):
+    global global_iter_id
+    ## Parameters for gogging
+    phase = "train"
+    total_iter["train"] = len(train_file) * epoch
+    log[phase][epoch] = {
+            # info
+            "forward": [],
+            "backward": [],
+            "fetch": [],
+            "iter_time": [],
+            # loss (float, not torch.cuda.FloatTensor)
+            "loss": [],
+            # constraint loss (float, not torch.cuda.FloatTensor)
+            "acc": [],
+            "miou": []
+        }
 
+    ## Prepare everything for training
     train_loss = []
     num_classes = opt.num_classes # idk why this is necessary, otherwise num_classes is referenced before assignment
-
     if opt.use_proxy_loss:
         model2d_classifier.train()
-
-    #points, labels, frames = data_util.load_hdf5_data(train_file, num_classes)
-    #num_points = points.shape[1]
-    # shape of points: (1000, 8192, 3)
-    # shape of labels: (1000, 8192,)
-    # shape of frames: (1000, 5,): 0th entry: scene (0000), 1st entry: version of scene(00), 2-4th entry: image ids (for 3 images)
-    #frames = frames[:, :2+num_images]
-    # volumes = volumes.permute(0, 1, 4, 3, 2)
-    # no permutation necessary
     train_loss_2d = []
     model.train()
     start = time.time()
     model2d_trainable.train()
-    # labels = labels.permute(0, 1, 4, 3, 2)
-    # no permutation necessary
-
-    # labels = labels[:, 0, :, grid_centerX, grid_centerY]  # center columns as targets
-    # not necessary; want to predict every point in cloud
-
-    #num_samples = points.shape[0]
-    # shuffle
-    #indices = torch.randperm(num_samples).long().split(batch_size)
-    # remove last mini-batch so that all the batches have equal size
-    #indices = indices[:-1]
 
     # initialize Tensors for depth, color, camera pose, labels for projection pass
     depth_images = torch.cuda.FloatTensor(batch_size * num_images, proj_image_dims[1], proj_image_dims[0])
     color_images = torch.cuda.FloatTensor(batch_size * num_images, 3, input_image_dims[1], input_image_dims[0])
     camera_poses = torch.cuda.FloatTensor(batch_size * num_images, 4, 4)
     label_images = torch.cuda.LongTensor(batch_size * num_images, proj_image_dims[1], proj_image_dims[0])
+
     tempTime = time.time()
+
     for t, data in enumerate(train_dataloader):
+        if(t == 15):
+            break
+
+        ## Logs for current training iteration
+        running_log = {
+            # loss
+            "loss": 0,
+            # acc
+            "acc": 0,
+            "miou": 0
+        }
+
+        ## Load data
         points, test, targets, frames, weights, fetch_time = data
         points, test, targets, weights = points.cuda(), test.cuda(), targets.cuda(), weights.cuda()
+        log[phase][epoch]["fetch"].append(fetch_time)
+
+
 
         start_forward = time.time()
         # targets = torch.autograd.Variable(labels[v].cuda())
         # valid targets
+
+        ## Only keep those Points that are labeled as a class that has at least one appearance
+        #TODO: Do we need this masking? There should only be points that are valid
+        #TODO: (The same also for test())
         mask = targets.view(-1).data.clone()
         for k in range(num_classes):
             if criterion_weights[k] == 0:
@@ -270,18 +327,23 @@ def train(epoch, iter, log_file, train_file, log_file_2d):
         if len(maskindices.shape) == 0:
             continue
 
+        ## Load images, camera poses and labels
+        ## frames contains the numbers of the images that correspond to the respective scene chunk
         data_util.load_frames_multi(opt.data_path_2d, frames, depth_images, color_images, camera_poses, color_mean, color_std)
 
+        ## Compute projection mapping
+        ## Outputs are the numbers of feature-pixels that correspond to each point, as well as points that correspond to each feature-pixel
+        #TODO: Is this comment correct?
         points_projection = torch.repeat_interleave(points, num_images, dim=0)
-        # compute projection mapping
         proj_mapping = [projection.compute_projection(p, d, c, num_points) for p, d, c in zip(points_projection, depth_images, camera_poses)]
         if None in proj_mapping: # invalid sample
-            # print '(invalid sample)'
+            print('(invalid sample)')
             continue
         proj_mapping = list(zip(*proj_mapping))
         proj_ind_3d = torch.stack(proj_mapping[0])
         proj_ind_2d = torch.stack(proj_mapping[1])
 
+        #TODO: Same again: Do we need this masking? Here probably yes; I don't know the classes of the images, but probably they are not completely the same as ours
         if opt.use_proxy_loss:
             data_util.load_label_frames(opt.data_path_2d, frames, label_images, num_classes)
             mask2d = label_images.view(-1).clone()
@@ -300,14 +362,35 @@ def train(epoch, iter, log_file, train_file, log_file_2d):
         # 2d/3d
         input3d = torch.autograd.Variable(points.cuda())
         output = model(input3d, imageft, torch.autograd.Variable(proj_ind_3d), torch.autograd.Variable(proj_ind_2d))
+        log[phase][epoch]["forward"].append(time.time() - start_forward)
         pred = output
         num_classes = pred.size(2)
         loss = criterion(pred.contiguous().view(-1, num_classes), targets.view(-1).cuda(), weights.view(-1).cuda())
+        pred = torch.argmax(pred,2)
 
+        running_log["acc"] = pred.eq(targets).sum().item() / pred.view(-1).size(0)
+        start = time.time()
 
+        running_log["loss"] = loss
         # loss = criterion(output.view(-1, num_classes), targets.view(-1))
         # _, loss, _ = model_fn(model, (points, targets), imageft, torch.autograd.Variable(proj_ind_3d), torch.autograd.Variable(proj_ind_2d))
 
+        ##computation of miou
+        miou = []
+        for i in range(21):
+            # if i == 0: continue
+            pred_ids = torch.arange(pred.view(-1).size(0))[pred.view(-1) == i].tolist()
+            target_ids = torch.arange(targets.view(-1).size(0))[targets.view(-1) == i].tolist()
+            if len(target_ids) == 0:
+                if (len(pred_ids) != 0):  ## added these 2 lines: Before, we did not incorporate classes that were predicted, but did not appear.
+                    miou.append(0)  ## Not sure if it makes sense to include this
+                continue
+            num_correct = len(set(pred_ids).intersection(set(target_ids)))
+            num_union = len(set(pred_ids).union(set(target_ids)))
+            miou.append(num_correct / (num_union + 1e-8))
+
+        running_log["miou"] = np.mean(miou)
+        ## endo of miou
 
 
 
@@ -332,7 +415,10 @@ def train(epoch, iter, log_file, train_file, log_file_2d):
             predictions = predictions.view(-1)
             k = label_images.view(-1)
             confusion2d.add(torch.index_select(predictions, 0, mask2d), torch.index_select(k, 0, mask2d))
-
+        log[phase][epoch]["backward"].append(time.time() - start)
+        log[phase][epoch]["loss"].append(running_log["loss"].item())
+        log[phase][epoch]["acc"].append(running_log["acc"])
+        log[phase][epoch]["miou"].append(running_log["miou"])
 
 
         # confusion
@@ -362,6 +448,15 @@ def train(epoch, iter, log_file, train_file, log_file_2d):
             if opt.use_proxy_loss:
                 evaluate_confusion(confusion2d, train_loss_2d, epoch, iter, -1, 'Train2d', log_file_2d)
 
+        iter_time = log[phase][epoch]["fetch"][-1]
+        iter_time += log[phase][epoch]["forward"][-1]
+        iter_time += log[phase][epoch]["backward"][-1]
+        log[phase][epoch]["iter_time"].append(iter_time)
+
+        if (t + 1) % 10 == 0:
+            train_report(epoch)
+        global_iter_id += 1
+
     end = time.time()
     took = end - start
     evaluate_confusion(confusion, train_loss, epoch, iter, took, 'Train', log_file)
@@ -371,6 +466,21 @@ def train(epoch, iter, log_file, train_file, log_file_2d):
 
 
 def test(epoch, iter, log_file, val_dataloader, log_file_2d):
+    total_iter["val"] = len(val_dataloader) * epoch
+    phase = "val"
+    log[phase][epoch] = {
+        # info
+        "forward": [],
+        "backward": [],
+        "fetch": [],
+        "iter_time": [],
+        # loss (float, not torch.cuda.FloatTensor)
+        "loss": [],
+        # constraint loss (float, not torch.cuda.FloatTensor)
+        "acc": [],
+        "miou": []
+    }
+
     test_loss = []
     test_loss_2d = []
     model.eval()
@@ -401,8 +511,17 @@ def test(epoch, iter, log_file, val_dataloader, log_file_2d):
 
 
         for t,data in enumerate(val_dataloader):
+            running_log = {
+                # loss
+                "loss": 0,
+                # acc
+                "acc": 0,
+                "miou": 0
+            }
             points, test, targets, frames, weights, fetch_time = data
             points, test, targets, weights = points.cuda(), test.cuda(), targets.cuda(), weights.cuda()
+            log[phase][epoch]["fetch"].append(fetch_time)
+
             num_points = points.shape[1]
 
             frames = frames[:, :2 + num_images]
@@ -446,7 +565,33 @@ def test(epoch, iter, log_file, val_dataloader, log_file_2d):
             # 2d/3d
             input3d = points.cuda()
             output = model(input3d, imageft, proj_ind_3d, proj_ind_2d)
+            preds = torch.argmax(output, 2)
+            running_log["acc"] = preds.eq(targets).sum().item() / preds.view(-1).size(0)
+
             loss = criterion(output.view(-1, num_classes), targets.view(-1), weights.view(-1))
+            running_log["loss"] = loss
+
+            ##Computation of Miou
+            miou = []
+            for i in range(21):
+                # if i == 0: continue
+                pred_ids = torch.arange(preds.view(-1).size(0))[preds.view(-1) == i].tolist()
+                target_ids = torch.arange(targets.view(-1).size(0))[targets.view(-1) == i].tolist()
+                if len(target_ids) == 0:
+                    if (len(pred_ids) != 0):  ## added these 2 lines: Before, we did not incorporate classes that were predicted, but did not appear.
+                        miou.append(0)  ## Not sure if it makes sense to include this
+                    continue
+                num_correct = len(set(pred_ids).intersection(set(target_ids)))
+                num_union = len(set(pred_ids).union(set(target_ids)))
+                miou.append(num_correct / (num_union + 1e-8))
+
+            running_log["miou"] = np.mean(miou)
+            ##End of Miou
+
+            log[phase][epoch]["loss"].append(running_log["loss"].item())
+            log[phase][epoch]["acc"].append(running_log["acc"])
+            log[phase][epoch]["miou"].append(running_log["miou"])
+
             test_loss.append(loss.item())
             if opt.use_proxy_loss:
                 loss2d = criterion2d(ft2d.view(-1, num_classes), label_images.view(-1))
@@ -466,6 +611,9 @@ def test(epoch, iter, log_file, val_dataloader, log_file_2d):
             predictions = predictions.view(-1)
             k = targets.data.view(-1)
             confusion_val.add(torch.index_select(predictions, 0, maskindices), torch.index_select(k, 0, maskindices))
+            if(epoch % 5 == 0):
+                model_root = os.path.join(CONF.OUTPUT_ROOT, stamp)
+                torch.save(model, os.path.join(model_root, str(epoch) + "model.pth"))
 
     end = time.time()
     took = end - start
@@ -481,8 +629,8 @@ def evaluate_confusion(confusion_matrix, loss, epoch, iter, time, which, log_fil
     valids = np.zeros(num_classes, dtype=np.float32)
     iou = np.zeros(num_classes, dtype=np.float32)
     for c in range(num_classes):
-        num = conf[c, :].sum() # number of points with ground truth c (TP + TN)
-        valids[c] = -1 if num == 0 else float(conf[c][c]) / float(num) # TP / (TP + TN)
+        num = conf[c, :].sum() # number of points with ground truth c (TP + FN)
+        valids[c] = -1 if num == 0 else float(conf[c][c]) / float(num) # TP / (TP + FN)
         total_correct += conf[c][c]
         F = conf[:, c].sum() # number of points predicted to be in class c (FP + FN)
         iou[c] = 0 if conf[c, c]+F == 0 else float(conf[c, c]) / float(conf[c, c]+F) # TP / (TP + FP + FN)
@@ -497,7 +645,14 @@ def evaluate_confusion(confusion_matrix, loss, epoch, iter, time, which, log_fil
 
 
 def main():
+    stamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+    tb_path = os.path.join(CONF.OUTPUT_ROOT, stamp, "tensorboard")
 
+    log_writer = SummaryWriter(tb_path)
+    global log_writer
+
+    global global_iter_id
+    global_iter_id = 0
 
     if not os.path.exists(opt.output):
         os.makedirs(opt.output)
@@ -546,7 +701,8 @@ def main():
             if loss2d:
                  val2d_loss.extend(loss2d)
 
-
+        epoch_report(epoch)
+        dump_log(epoch)
         evaluate_confusion(confusion, train_loss, epoch, iter, -1, 'Train', log_file)
         if opt.use_proxy_loss:
             evaluate_confusion(confusion2d, train2d_loss, epoch, iter, -1, 'Train2d', log_file_2d)
@@ -569,6 +725,81 @@ def main():
         log_file_2d.close()
         if has_val:
             log_file_2d_val.close()
+
+def train_report(epoch_id):
+    fetch_time = [time for time in log["train"][epoch_id]["fetch"]]
+    forward_time = [time for time in log["train"][epoch_id]["forward"]]
+    backward_time = [time for time in log["train"][epoch_id]["backward"]]
+    iter_time = [time for time in log["train"][epoch_id]["iter_time"]]
+    mean_train_time = np.mean(iter_time[0].numpy())
+    mean_est_val_time = np.mean([fetch + forward for fetch, forward in zip(fetch_time[0], forward_time)])
+    #eta_sec = (total_iter["train"] - global_iter_id - 1) * mean_train_time
+    #eta_sec += len(self.dataloader["val"]) * (self.epoch - epoch_id) * mean_est_val_time
+    #eta = decode_eta(eta_sec)
+
+    # print report
+    iter_report = iter_report_template.format(
+        global_iter_id=global_iter_id + 1,
+        total_iter=total_iter["train"],
+        train_loss=round(np.mean([loss for loss in log["train"][epoch_id]["loss"]]), 5),
+        train_acc=round(np.mean([loss for loss in log["train"][epoch_id]["acc"]]), 5),
+        train_miou=round(np.mean([loss for loss in log["train"][epoch_id]["miou"]]), 5),
+        mean_fetch_time=round(np.mean(fetch_time[0].numpy()), 5),
+        mean_forward_time=round(np.mean(forward_time), 5),
+        mean_backward_time=round(np.mean(backward_time), 5),
+        mean_iter_time=round(np.mean(iter_time[0].numpy()), 5),
+        #eta_h=eta["h"],
+        #eta_m=eta["m"],
+        #eta_s=eta["s"]
+    )
+
+def dump_log(epoch_id):
+    print(epoch_id, "<------------------")
+    print(np.mean([loss for loss in log["train"][epoch_id]["loss"]]))
+    print(np.mean([loss for loss in log["val"][epoch_id]["loss"]]))
+    print(np.mean([acc for acc in log["train"][epoch_id]["acc"]]))
+    print(np.mean([acc for acc in log["val"][epoch_id]["acc"]]))
+    # loss
+    print("Writing everything.")
+    log_writer.add_scalars(
+        "log/{}".format("loss"),
+        {
+            "train": np.mean([loss for loss in log["train"][epoch_id]["loss"]]),
+            "val": np.mean([loss for loss in log["val"][epoch_id]["loss"]])
+        },
+        epoch_id
+    )
+
+    # eval
+    log_writer.add_scalars(
+        "eval/{}".format("acc"),
+        {
+            "train": np.mean([acc for acc in log["train"][epoch_id]["acc"]]),
+            "val": np.mean([acc for acc in log["val"][epoch_id]["acc"]])
+        },
+        epoch_id
+    )
+    log_writer.add_scalars(
+        "eval/{}".format("miou"),
+        {
+            "train": np.mean([miou for miou in log["train"][epoch_id]["miou"]]),
+            "val": np.mean([miou for miou in log["val"][epoch_id]["miou"]])
+        },
+        epoch_id
+    )
+
+
+def epoch_report(epoch_id):
+    print("epoch [{}/{}] done...".format(epoch_id+1, 20))
+    epoch_report = epoch_report_template.format(
+        train_loss=round(np.mean([loss for loss in log["train"][epoch_id]["loss"]]), 5),
+        train_acc=round(np.mean([acc for acc in log["train"][epoch_id]["acc"]]), 5),
+        train_miou=round(np.mean([miou for miou in log["train"][epoch_id]["miou"]]), 5),
+        val_loss=round(np.mean([loss for loss in log["val"][epoch_id]["loss"]]), 5),
+        val_acc=round(np.mean([acc for acc in log["val"][epoch_id]["acc"]]), 5),
+        val_miou=round(np.mean([miou for miou in log["val"][epoch_id]["miou"]]), 5),
+    )
+    print(epoch_report)
 
 if __name__ == '__main__':
     main()
