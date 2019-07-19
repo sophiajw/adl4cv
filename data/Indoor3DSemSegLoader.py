@@ -71,17 +71,22 @@ class Indoor3DSemSeg(data.Dataset):
                         f.writelines(os.path.join(root,entry + "\n"))
             all_files = _get_data_files(os.path.join(root, "all_files.txt"))
 
-        data_batchlist, label_batchlist = [], []
+        data_batchlist, label_batchlist, frames_batchlist = [], [], []
         for f in all_files:
-            data, label = _load_data_file(f)
+            data, label, frames = _load_data_file(f)
             if(len(data.shape) == 2):
                 data = np.expand_dims(data, axis=0)
                 label = np.expand_dims(label, axis=0)
+                frames = np.expand_dims(frames, axis=0)
             data_batchlist.append(data)
             label_batchlist.append(label)
+            frames_batchlist.append(frames)
+
+
 
         data_batches = np.concatenate(data_batchlist, 0)
         labels_batches = np.concatenate(label_batchlist, 0)
+        frames_batches = np.concatenate(frames_batchlist, 0)
 
 
 
@@ -132,9 +137,11 @@ class Indoor3DSemSeg(data.Dataset):
         if self.train:
             self.points = data_batches[train_idxs, ...]
             self.labels = labels_batches[train_idxs, ...]
+            self.frames = frames_batches[train_idxs, ...]
         else:
             self.points = data_batches[test_idxs, ...]
             self.labels = labels_batches[test_idxs, ...]
+            self.frames = frames_batches[test_idxs, ...]
 
     def __getitem__(self, idx):
         start = time.time()
@@ -146,12 +153,15 @@ class Indoor3DSemSeg(data.Dataset):
         current_labels = torch.from_numpy(self.labels[idx, pt_idxs].copy()).type(
             torch.LongTensor
         )
+        current_frames = torch.from_numpy(self.frames[idx, pt_idxs].copy()).type(
+            torch.LongTensor
+        )
         fetch_time = time.time() - start
 
 
         sample_weights = self.labelweights[current_labels]
         test = np.zeros((4096,0))
-        return current_points, test, current_labels, sample_weights, fetch_time
+        return current_points, test, current_labels, current_frames, sample_weights, fetch_time
 
     def __len__(self):
         return int(self.points.shape[0] * self.data_precent)
@@ -169,6 +179,6 @@ if __name__ == "__main__":
     print(len(dset))
     dloader = torch.utils.data.DataLoader(dset, batch_size=32, shuffle=True)
     for i, data in enumerate(dloader, 0):
-        inputs, labels = data
+        inputs, labels, frames = data
         if i == len(dloader) - 1:
             print(inputs.size())
