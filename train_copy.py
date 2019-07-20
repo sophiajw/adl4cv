@@ -213,7 +213,7 @@ train_dataset = Indoor3DSemSeg(num_points, root=opt.input_folder_3d, train=True)
 val_dataset = Indoor3DSemSeg(num_points, root=opt.input_folder_3d, train=False)
 val_dataloader = DataLoader(
     val_dataset,
-    batch_size=opt.batch_size,
+    batch_size=4,
     shuffle=True,
     pin_memory=True,
     num_workers=2
@@ -256,11 +256,11 @@ print("Evaluation examples: {}".format(val_examples))
 print("Start training...\n")
 save_info(opt, root, train_examples, val_examples, num_params)
 
-def train(epoch, iter, log_file, train_file, log_file_2d):
+def train(epoch, iter, log_file, train_dataloader, log_file_2d):
     global global_iter_id
-    ## Parameters for gogging
+    ## Parameters for logging
     phase = "train"
-    total_iter["train"] = len(train_file) * epoch
+    total_iter["train"] = len(train_dataloader) * epoch
     log[phase][epoch] = {
             # info
             "forward": [],
@@ -276,13 +276,13 @@ def train(epoch, iter, log_file, train_file, log_file_2d):
 
     ## Prepare everything for training
     train_loss = []
-    num_classes = opt.num_classes # idk why this is necessary, otherwise num_classes is referenced before assignment
     if opt.use_proxy_loss:
         model2d_classifier.train()
     train_loss_2d = []
     model.train()
     start = time.time()
     model2d_trainable.train()
+    num_classes = opt.num_classes # idk why this is necessary, otherwise num_classes is referenced before assignment
 
     # initialize Tensors for depth, color, camera pose, labels for projection pass
     depth_images = torch.cuda.FloatTensor(batch_size * num_images, proj_image_dims[1], proj_image_dims[0])
@@ -293,8 +293,6 @@ def train(epoch, iter, log_file, train_file, log_file_2d):
     tempTime = time.time()
 
     for t, data in enumerate(train_dataloader):
-        if(t == 15):
-            break
 
         ## Logs for current training iteration
         running_log = {
@@ -490,8 +488,6 @@ def test(epoch, iter, log_file, val_dataloader, log_file_2d):
         model2d_classifier.eval()
     start = time.time()
     num_classes = opt.num_classes
-
-
 
     #points, labels, frames = data_util.load_hdf5_data(val_file, num_classes)
     #num_points = points.shape[1]
