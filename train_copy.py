@@ -653,8 +653,8 @@ def main():
     stamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
     tb_path = os.path.join(CONF.OUTPUT_ROOT, stamp, "tensorboard")
 
-    log_writer = SummaryWriter(tb_path)
     global log_writer
+    log_writer = SummaryWriter(tb_path)
 
     global global_iter_id
     global_iter_id = 0
