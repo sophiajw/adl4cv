@@ -26,7 +26,8 @@ RADIUS = [[0.05, 0.1], [0.1, 0.2], [0.2, 0.4], [0.4, 0.8]]
 NSAMPLE = [[16, 32], [16, 32], [16, 32], [16, 32]]
 MLPS = [[[16, 16, 32], [32, 32, 64]], [[64, 64, 128], [64, 96, 128]],
         [[128, 196, 256], [128, 196, 256]], [[256, 256, 512], [256, 384, 512]]]
-FP_MLPS = [[128, 128], [256, 256], [512, 512], [512, 512]]
+#FP_MLPS = [[128, 128], [256, 256], [512, 512], [512, 512]]
+FP_MLPS = [[128, 128], [192, 192], [512, 512], [1024, 1024]]
 CLS_FC = [128]
 DP_RATIO = 0.5
 
@@ -92,80 +93,96 @@ class Model2d3d(nn.Module):
         self.SA_modules_features = nn.ModuleList()
         self.SA_modules_geom = nn.ModuleList()
         channel_in = input_channels
-
+        channel_in_geom = 0
         skip_channel_list = [input_channels]
         skip_channel_list_fused = [input_channels]
         for k in range(NPOINTS.__len__()):
             mlps = MLPS[k].copy()
             channel_out = 0
             # added for concatenation of geometry and feature point clouds
-            mlps_geom = mlps
+            mlps_geom = mlps.copy()
             channel_out_geom = channel_out
-            for idx in range(mlps.__len__()):
-                mlps_geom[idx] = [0] + mlps_geom[idx]
-                channel_out_geom += mlps[idx][-1]
+            for idx in range(mlps_geom.__len__()):
+                mlps_geom[idx] = [channel_in_geom] + mlps_geom[idx]
+                channel_out_geom += mlps_geom[idx][-1]
             for idx in range(mlps.__len__()):
                 mlps[idx] = [channel_in] + mlps[idx]
                 channel_out += mlps[idx][-1]
-
-            self.SA_modules.append(
-                PointnetSAModuleMSG(
-                    npoint=NPOINTS[k],
-                    radii=RADIUS[k],
-                    nsamples=NSAMPLE[k],
-                    mlps=mlps,
-                    use_xyz=use_xyz,
-                    bn=bn
-                )
-            )
+            print(mlps)
+            #self.SA_modules.append(
+            #    PointnetSAModuleMSG(
+            #        npoint=NPOINTS[k],
+            #        radii=RADIUS[k],
+            #        nsamples=NSAMPLE[k],
+            #        mlps=mlps,
+            #        use_xyz=use_xyz,
+            #        bn=bn
+            #    )
+            #)
 
             self.SA_modules_geom.append(
-                PointnetSAModuleMSG(
-                    npoint=NPOINTS[k],
-                    radii=RADIUS[k],
-                    nsamples=NSAMPLE[k],
-                    mlps=mlps_geom,
-                    use_xyz=use_xyz,
-                    bn=bn
-                )
-            )
+                 PointnetSAModuleMSG(
+                     npoint=NPOINTS[k],
+                     radii=RADIUS[k],
+                     nsamples=NSAMPLE[k],
+                     mlps=mlps_geom,
+                     use_xyz=use_xyz,
+                     bn=bn
+                 )
+             )
 
             self.SA_modules_features.append(
-                PointnetSAModuleMSG(
-                    npoint=NPOINTS[k],
-                    radii=RADIUS[k],
-                    nsamples=NSAMPLE[k],
-                    mlps=mlps,
-                    use_xyz=False,
-                    bn=bn
-                )
-            )
+                 PointnetSAModuleMSG(
+                     npoint=NPOINTS[k],
+                     radii=RADIUS[k],
+                     nsamples=NSAMPLE[k],
+                     mlps=mlps,
+                     use_xyz=False,
+                     bn=bn
+                 )
+             )
             skip_channel_list.append(channel_out)
             skip_channel_list_fused.append(channel_out + channel_out_geom)
             channel_in = channel_out
+            channel_in_geom = channel_out_geom
             channel_in_fused = channel_out + channel_out_geom
 
         # feature propagation layer
         self.FP_modules = nn.ModuleList()
         self.FP_modules_fused = nn.ModuleList()
 
-        for k in range(FP_MLPS.__len__()):
-            pre_channel = FP_MLPS[k + 1][-1] if k + 1 < len(FP_MLPS) else channel_out
-            self.FP_modules.append(
-                PointnetFPModule(
-                    mlp=[pre_channel + skip_channel_list[k]] + FP_MLPS[k],
-                    bn=bn
-                )
-            )
+        #for k in range(FP_MLPS.__len__()):
+        #    pre_channel = FP_MLPS[k + 1][-1] if k + 1 < len(FP_MLPS) else channel_out
+        #    self.FP_modules.append(
+        #        PointnetFPModule(
+        #            mlp=[pre_channel + skip_channel_list[k]] + FP_MLPS[k],
+        #            bn=bn
+        #        )
+        #    )
+#
+
+        FP_MLPS_fused = [[256],[256],[512]]
 
         for k in range(FP_MLPS.__len__()):
-            pre_channel_fused = FP_MLPS[k + 1][-1] if k + 1 < len(FP_MLPS) else channel_out + channel_out_geom
-            self.FP_modules_fused.append(
-                PointnetFPModule(
-                    mlp=[pre_channel_fused + skip_channel_list_fused[k]] + FP_MLPS[k],
-                    bn=bn
-                )
-            )
+             print(k)
+             if(k+1 < len(FP_MLPS)):
+                 print(FP_MLPS[k+1][-1], "<------------")
+             pre_channel_fused = FP_MLPS[k + 1][-1] if k + 1 < len(FP_MLPS) else channel_out + channel_out_geom
+
+             #if(k == 1):
+             #    pre_channel_fused = 256-96
+             #if(k == 2):
+             #    pre_channel_fused = 256
+             #if(pre_channel_fused == 2048):
+             #    pre_channel_fused = 512
+
+             print([pre_channel_fused + skip_channel_list_fused[k]] + FP_MLPS[k], "<-- FP")
+             self.FP_modules_fused.append(
+                 PointnetFPModule(
+                     mlp=[pre_channel_fused + skip_channel_list_fused[k]] + FP_MLPS[k],
+                     bn=bn
+                 )
+             )
 
         # classifier
         cls_layers = []
@@ -176,6 +193,18 @@ class Model2d3d(nn.Module):
         cls_layers.append(pt_utils.Conv1d(pre_channel, num_classes, activation=None, bn=bn))
         cls_layers.insert(1, nn.Dropout(0.5))
         self.cls_layer = nn.Sequential(*cls_layers)
+
+        #self.fuse_layer_geom0 = nn.Linear(4096 * 6, 4096 * 3, bias=True)
+        #self.fuse_layer_geom1 = nn.Linear(1024 * 6, 1024 * 3, bias=True)
+        #self.fuse_layer_geom2 = nn.Linear(256 * 6, 256 * 3, bias=True)
+        #self.fuse_layer_geom3 = nn.Linear(64 * 6, 64 * 3, bias=True)
+        #self.fuse_layer_geom4 = nn.Linear(16 * 6, 16 * 3, bias=True)
+
+        #self.fuse_layer_feat1 = nn.Linear(96 * 2048, 96 * 1024, bias=True)
+        #self.fuse_layer_feat2 = nn.Linear(256 * 512, 256 * 256, bias=True)
+        #self.fuse_layer_feat3 = nn.Linear(128 * 512, 512 * 64, bias=True)
+        #self.fuse_layer_feat4 = nn.Linear(1024 * 32, 1024 * 16, bias=True)
+
 
     def _break_up_pc(self, pc):
         r"""
@@ -227,7 +256,7 @@ class Model2d3d(nn.Module):
         # pointnet++ on geometry and features,
         # TODO split pointnet++ and process geometry and features separately in the beginning
 
-        fuse_at_beginning = True
+        fuse_at_beginning = False
 
         if fuse_at_beginning:
             concatenated_cloud = torch.cat([point_cloud, image_features], 2)
@@ -257,24 +286,55 @@ class Model2d3d(nn.Module):
             # set abstraction
             for i in range(len(self.SA_modules_geom)):
                 li_xyz_geom, li_features_geom = self.SA_modules_geom[i](l_xyz_geom[i], l_features_geom[i])
+
                 l_xyz_geom.append(li_xyz_geom)
                 l_features_geom.append(li_features_geom)
 
+
             xyz, features = self._break_up_pc(image_features)
             l_xyz, l_features = [xyz], [features]
+
+            l_xyz, l_features = [point_cloud.contiguous()], [image_features.transpose(1,2).contiguous()]
             # set abstraction
-            for i in range(len(self.SA_modules)):
-                li_xyz, li_features = self.SA_modules[i](l_xyz[i], l_features[i])
+            for i in range(len(self.SA_modules_features)):
+                li_xyz, li_features = self.SA_modules_features[i](l_xyz[i], l_features[i])
                 l_xyz.append(li_xyz)
                 l_features.append(li_features)
 
-            l_features.append(l_features_geom)
-            l_xyz.append(l_xyz_geom)
+            #l_features.append(l_features_geom)
+            #l_xyz.append(l_xyz_geom)
+            l_xyz_fused = list()
+            l_features_fused = list()
+
+            for i in range(len(l_xyz)):
+                l_xyz_fused.append(torch.cat((l_xyz_geom[i], l_xyz[i]), dim=2))
+                if(i > 0):
+                    l_features_fused.append(torch.cat((l_features_geom[i], l_features[i]),dim=1))
+                else:
+                    l_features_fused.append(l_features[i])
+
+
+
+
+
+            ## Fusion of features and geometry
+            #l_xyz_fused[0] = nn.ReLU(self.fuse_layer_geom0(l_xyz_fused[0].view(l_xyz_fused[0].shape, -1)))
+            #l_xyz_fused[1] = nn.ReLU(self.fuse_layer_geom1(l_xyz_fused[1].view(l_xyz_fused[1].shape, -1)))
+            #l_xyz_fused[2] = nn.ReLU(self.fuse_layer_geom2(l_xyz_fused[2].view(l_xyz_fused[2].shape, -1)))
+            #l_xyz_fused[3] = nn.ReLU(self.fuse_layer_geom3(l_xyz_fused[3].view(l_xyz_fused[3].shape, -1)))
+            #l_xyz_fused[4] = nn.ReLU(self.fuse_layer_geom4(l_xyz_fused[4].view(l_xyz_fused[4].shape, -1)))
+            #l_features_fused[0] = l_features_fused[0]
+            #l_features_fused[1] = nn.ReLU(self.fuse_layer_feat1(l_xyz_fused[1].view(l_xyz_fused[1].shape, -1)))
+            #l_features_fused[2] = nn.ReLU(self.fuse_layer_feat2(l_xyz_fused[2].view(l_xyz_fused[2].shape, -1)))
+            #l_features_fused[3] = nn.ReLU(self.fuse_layer_feat3(l_xyz_fused[3].view(l_xyz_fused[3].shape, -1)))
+            #l_features_fused[4] = nn.ReLU(self.fuse_layer_feat4(l_xyz_fused[4].view(l_xyz_fused[4].shape, -1)))
+
+
 
             # feature propagation
-            for i in range(-1, -(len(self.FP_modules) + 1), -1):
-                l_features[i - 1] = self.FP_modules[i](
-                    l_xyz[i - 1], l_xyz[i], l_features[i - 1], l_features[i]
+            for i in range(-1, -(len(self.FP_modules_fused) + 1), -1):
+                l_features[i - 1] = self.FP_modules_fused[i](
+                    l_xyz_fused[i - 1], l_xyz_fused[i], l_features_fused[i - 1], l_features_fused[i]
                 )
 
             # classifier

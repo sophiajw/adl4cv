@@ -75,6 +75,8 @@ parser = argparse.ArgumentParser()
 # data paths
 parser.add_argument('--train_data_list', required=False, default='/media/lorenzlamm/My Book/processing/final_training_files/hdf5_files.txt', help='path to file list of h5 train data')
 parser.add_argument('--input_folder_3d', required=False, default='/home/lorenzlamm/Dokumente/sampleBeachData/finalContainers')
+#parser.add_argument('--input_folder_3d', required=False, default='/home/lorenzlamm/Dokumente/final_new/adl4cv/data')
+
 parser.add_argument('--val_data_list', default='', help='path to file list of h5 val data')
 parser.add_argument('--output', default='./logs', help='folder to output model checkpoints')
 parser.add_argument('--data_path_2d', required=False, default='/home/lorenzlamm/Dokumente/sampleBeachData/2d_data', help='path to 2d train data')
@@ -211,9 +213,18 @@ model_fn = model_fn_decorator(nn.CrossEntropyLoss())
 is_wholescene = False
 train_dataset = Indoor3DSemSeg(num_points, root=opt.input_folder_3d, train=True)
 val_dataset = Indoor3DSemSeg(num_points, root=opt.input_folder_3d, train=False)
+
+all_frames = np.zeros((1000,1))
+for i in range(len(train_dataset)):
+    all_frames[i] = train_dataset[i][3][0]
+all_frames = all_frames.flatten()
+print(all_frames.shape)
+print(np.unique(all_frames))
+
+
 val_dataloader = DataLoader(
     val_dataset,
-    batch_size=4,
+    batch_size=opt.batch_size,
     shuffle=True,
     pin_memory=True,
     num_workers=8
@@ -293,7 +304,6 @@ def train(epoch, iter, log_file, train_dataloader, log_file_2d):
     tempTime = time.time()
 
     for t, data in enumerate(train_dataloader):
-
         ## Logs for current training iteration
         running_log = {
             # loss
@@ -531,7 +541,6 @@ def test(epoch, iter, log_file, val_dataloader, log_file_2d):
             maskindices = mask.nonzero().squeeze()
             if len(maskindices.shape) == 0:
                 continue
-
             # get 2d data
             data_util.load_frames_multi(opt.data_path_2d, frames, depth_images, color_images, camera_poses, color_mean, color_std)
             if opt.use_proxy_loss:
