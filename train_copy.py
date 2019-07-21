@@ -74,12 +74,12 @@ best_report_template = BEST_REPORT_TEMPLATE
 parser = argparse.ArgumentParser()
 # data paths
 parser.add_argument('--train_data_list', required=False, default='/media/lorenzlamm/My Book/processing/final_training_files/hdf5_files.txt', help='path to file list of h5 train data')
-parser.add_argument('--input_folder_3d', required=False, default='/home/lorenzlamm/Dokumente/sampleBeachData/finalContainers')
+parser.add_argument('--input_folder_3d', required=False, default='/workspace/beachnet_train/bn_train_data')
 #parser.add_argument('--input_folder_3d', required=False, default='/home/lorenzlamm/Dokumente/final_new/adl4cv/data')
 
 parser.add_argument('--val_data_list', default='', help='path to file list of h5 val data')
 parser.add_argument('--output', default='./logs', help='folder to output model checkpoints')
-parser.add_argument('--data_path_2d', required=False, default='/home/lorenzlamm/Dokumente/sampleBeachData/2d_data', help='path to 2d train data')
+parser.add_argument('--data_path_2d', required=False, default='/workspace/beachnet_train/bn_train_data', help='path to 2d train data')
 parser.add_argument('--class_weight_file', default='', help='path to histogram over classes')
 # train params
 parser.add_argument('--num_classes', default=21, help='#classes')
@@ -100,7 +100,7 @@ parser.add_argument('--weight_decay_pointnet', type=float, default=0, help='L2 r
 parser.add_argument('--retrain', default='', help='model to load')
 parser.add_argument('--start_epoch', type=int, default=0, help='start epoch')
 parser.add_argument('--model2d_type', default='scannet', help='which enet (scannet)')
-parser.add_argument('--model2d_path', required=False, default='/home/lorenzlamm/Dokumente/final_new/adl4cv/scannetv2_enet.pth', help='path to enet model')
+parser.add_argument('--model2d_path', required=False, default='/workspace/beachnet_train/bn_train_data/scannetv2_enet.pth', help='path to enet model')
 parser.add_argument('--use_proxy_loss', dest='use_proxy_loss', action='store_true')
 parser.add_argument('--num_points', default=4096, help='number of points in one sample')
 # 2d/3d 
