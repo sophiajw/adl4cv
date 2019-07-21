@@ -216,13 +216,13 @@ val_dataloader = DataLoader(
     batch_size=4,
     shuffle=True,
     pin_memory=True,
-    num_workers=2
+    num_workers=8
 )
 train_dataloader = DataLoader(
     train_dataset,
     batch_size=opt.batch_size,
     pin_memory=True,
-    num_workers=2,
+    num_workers=8,
     shuffle=True
 )
 dataloader = {
