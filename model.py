@@ -84,6 +84,9 @@ class Model2d3d(nn.Module):
         use_xyz = True
         bn=True
 
+        # reduce feature size to 32
+        self.conv = nn.Conv2d(128, 32, 1)
+
         # pooling across num_images point clouds
         self.pooling = nn.MaxPool1d(kernel_size=self.num_images)
 
@@ -236,6 +239,10 @@ class Model2d3d(nn.Module):
         batch_size = point_cloud.shape[0]
         num_points = point_cloud.shape[1] # number of points in sample. do we need number of points in whole scene?
         num_images = projection_indices_3d.shape[0] // batch_size
+
+        # reduce number of feature channels
+
+        image_features = self.conv(image_features)
 
         # project 2d to 3d
         image_features = [Projection.apply(ft, ind3d, ind2d, num_points) for ft, ind3d, ind2d in zip(image_features, projection_indices_3d, projection_indices_2d)]
