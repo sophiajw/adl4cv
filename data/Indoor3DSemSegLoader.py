@@ -57,19 +57,19 @@ class Indoor3DSemSeg(data.Dataset):
         self.train, self.num_points = train, num_points
 
         if(self.train):
-            with open(os.path.join(root, "all_files.txt"), 'w+') as f:
+            with open(os.path.join(root, "all_files_train.txt"), 'w+') as f:
                 list = os.listdir(root)
                 for entry in list:
                     if(entry.startswith("train")):
                         f.writelines(os.path.join(root, entry + "\n"))
-            all_files = _get_data_files(os.path.join(root, "all_files.txt"))
+            all_files = _get_data_files(os.path.join(root, "all_files_train.txt"))
         else:
-            with open(os.path.join(root, "all_files.txt"), 'w+') as f:
+            with open(os.path.join(root, "all_files_val.txt"), 'w+') as f:
                 list = os.listdir(root)
                 for entry in list:
                     if(entry.startswith("val")):
                         f.writelines(os.path.join(root,entry + "\n"))
-            all_files = _get_data_files(os.path.join(root, "all_files.txt"))
+            all_files = _get_data_files(os.path.join(root, "all_files_val.txt"))
 
         data_batchlist, label_batchlist, frames_batchlist = [], [], []
         for f in all_files:

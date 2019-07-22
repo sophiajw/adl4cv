@@ -224,7 +224,7 @@ print(np.unique(all_frames))
 
 val_dataloader = DataLoader(
     val_dataset,
-    batch_size=opt.batch_size,
+    batch_size=4,
     shuffle=True,
     pin_memory=True,
     num_workers=8
@@ -345,7 +345,7 @@ def train(epoch, iter, log_file, train_dataloader, log_file_2d):
         points_projection = torch.repeat_interleave(points, num_images, dim=0)
         proj_mapping = [projection.compute_projection(p, d, c, num_points) for p, d, c in zip(points_projection, depth_images, camera_poses)]
         if None in proj_mapping: # invalid sample
-            print('(invalid sample)')
+            # print('(invalid sample)')
             continue
         proj_mapping = list(zip(*proj_mapping))
         proj_ind_3d = torch.stack(proj_mapping[0])
@@ -439,7 +439,7 @@ def train(epoch, iter, log_file, train_dataloader, log_file_2d):
         confusion.add(torch.index_select(predictions, 0, maskindices.cuda()), torch.index_select(k, 0, maskindices))
         if(t % 10 == 0):
             print(t,"/", len(train_dataloader))
-            print("10 iterations took us " + str(time.time() - tempTime))
+            # print("10 iterations took us " + str(time.time() - tempTime))
             tempTime = time.time()
         log_file.write(_SPLITTER.join([str(f) for f in [epoch, iter, loss.item()]]) + '\n')
         iter += 1
