@@ -74,12 +74,14 @@ best_report_template = BEST_REPORT_TEMPLATE
 parser = argparse.ArgumentParser()
 # data paths
 parser.add_argument('--train_data_list', required=False, default='/media/lorenzlamm/My Book/processing/final_training_files/hdf5_files.txt', help='path to file list of h5 train data')
-parser.add_argument('--input_folder_3d', required=False, default='/workspace/beachnet_train/bn_train_data')
-#parser.add_argument('--input_folder_3d', required=False, default='/home/lorenzlamm/Dokumente/final_new/adl4cv/data')
+#parser.add_argument('--input_folder_3d', required=False, default='/workspace/beachnet_train/bn_train_data')
+parser.add_argument('--input_folder_3d', required=False, default='/home/lorenzlamm/Dokumente/sampleBeachData/finalContainers')
 
 parser.add_argument('--val_data_list', default='', help='path to file list of h5 val data')
 parser.add_argument('--output', default='./logs', help='folder to output model checkpoints')
-parser.add_argument('--data_path_2d', required=False, default='/workspace/beachnet_train/bn_train_data', help='path to 2d train data')
+#parser.add_argument('--data_path_2d', required=False, default='/workspace/beachnet_train/bn_train_data', help='path to 2d train data')
+parser.add_argument('--data_path_2d', required=False, default='/home/lorenzlamm/Dokumente/sampleBeachData/2d_data', help='path to 2d train data')
+
 parser.add_argument('--class_weight_file', default='', help='path to histogram over classes')
 # train params
 parser.add_argument('--num_classes', default=21, help='#classes')
@@ -100,7 +102,8 @@ parser.add_argument('--weight_decay_pointnet', type=float, default=0, help='L2 r
 parser.add_argument('--retrain', default='', help='model to load')
 parser.add_argument('--start_epoch', type=int, default=0, help='start epoch')
 parser.add_argument('--model2d_type', default='scannet', help='which enet (scannet)')
-parser.add_argument('--model2d_path', required=False, default='/workspace/beachnet_train/bn_train_data/scannetv2_enet.pth', help='path to enet model')
+#parser.add_argument('--model2d_path', required=False, default='/workspace/beachnet_train/bn_train_data/scannetv2_enet.pth', help='path to enet model')
+parser.add_argument('--model2d_path', required=False, default='//home/lorenzlamm/Dokumente/final_new/adl4cv/scannetv2_enet.pth', help='path to enet model')
 parser.add_argument('--use_proxy_loss', dest='use_proxy_loss', action='store_true')
 parser.add_argument('--num_points', default=4096, help='number of points in one sample')
 # 2d/3d 
@@ -167,13 +170,13 @@ grid_centerX = opt.grid_dimX // 2
 grid_centerY = opt.grid_dimY // 2
 color_mean = ENET_TYPES[opt.model2d_type][1]
 color_std = ENET_TYPES[opt.model2d_type][2]
-input_channels = 128
+input_channels = 0
 num_points = opt.num_points
 
 # create enet and pointnet++ models
 num_classes = opt.num_classes
 model2d_fixed, model2d_trainable, model2d_classifier = create_enet_for_3d(ENET_TYPES[opt.model2d_type], opt.model2d_path, num_classes)
-model = Model2d3d(num_classes, num_images, input_channels, intrinsic, proj_image_dims, opt.depth_min, opt.depth_max, opt.accuracy, fusion=True)
+model = Model2d3d(num_classes, num_images, input_channels, intrinsic, proj_image_dims, opt.depth_min, opt.depth_max, opt.accuracy, fusion=False, fuse_no_ft_pn=True)
 projection = ProjectionHelper(intrinsic, opt.depth_min, opt.depth_max, proj_image_dims, opt.accuracy)
 # create loss
 criterion_weights = torch.ones(num_classes) 
@@ -214,12 +217,12 @@ is_wholescene = False
 train_dataset = Indoor3DSemSeg(num_points, root=opt.input_folder_3d, train=True)
 val_dataset = Indoor3DSemSeg(num_points, root=opt.input_folder_3d, train=False)
 
-all_frames = np.zeros((1000,1))
-for i in range(len(train_dataset)):
-    all_frames[i] = train_dataset[i][3][0]
-all_frames = all_frames.flatten()
-print(all_frames.shape)
-print(np.unique(all_frames))
+#all_frames = np.zeros((1000,1))
+#for i in range(len(train_dataset)):
+#    all_frames[i] = train_dataset[i][3][0]
+#all_frames = all_frames.flatten()
+#print(all_frames.shape)
+#print(np.unique(all_frames))
 
 
 val_dataloader = DataLoader(
@@ -304,6 +307,8 @@ def train(epoch, iter, log_file, train_dataloader, log_file_2d):
     tempTime = time.time()
 
     for t, data in enumerate(train_dataloader):
+        if(t == 5):
+            break
         ## Logs for current training iteration
         running_log = {
             # loss
@@ -438,7 +443,7 @@ def train(epoch, iter, log_file, train_dataloader, log_file_2d):
         # computes the confustion matrix
         confusion.add(torch.index_select(predictions, 0, maskindices.cuda()), torch.index_select(k, 0, maskindices))
         if(t % 10 == 0):
-            print(t,"/", len(train_dataloader))
+            #print(t,"/", len(train_dataloader))
             # print("10 iterations took us " + str(time.time() - tempTime))
             tempTime = time.time()
         log_file.write(_SPLITTER.join([str(f) for f in [epoch, iter, loss.item()]]) + '\n')
@@ -759,11 +764,6 @@ def train_report(epoch_id):
     )
 
 def dump_log(epoch_id):
-    print(epoch_id, "<------------------")
-    print(np.mean([loss for loss in log["train"][epoch_id]["loss"]]))
-    print(np.mean([loss for loss in log["val"][epoch_id]["loss"]]))
-    print(np.mean([acc for acc in log["train"][epoch_id]["acc"]]))
-    print(np.mean([acc for acc in log["val"][epoch_id]["acc"]]))
     # loss
     print("Writing everything.")
     log_writer.add_scalars(
