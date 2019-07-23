@@ -69,10 +69,11 @@ def model_fn_decorator(criterion):
 # z-y-x coordinates
 class Model2d3d(nn.Module):
 
-    def __init__(self, num_classes, num_images, input_channels, intrinsic, image_dims, depth_min, depth_max, accuracy, fusion = False, fuse_no_ft_pn = True):
+    def __init__(self, num_classes, num_images, input_channels, intrinsic, image_dims, depth_min, depth_max, accuracy, fusion = False, fuse_no_ft_pn = True, pointnet_pointnet = False):
         # added input_channels (should be 128 from 2d features)
         # deleted grid_dims
         super(Model2d3d, self).__init__()
+        self.pointnet_pointnet = pointnet_pointnet
         self.fusion = fusion
         self.fuse_no_ft_pn = fuse_no_ft_pn
         if(self.fuse_no_ft_pn):
@@ -95,34 +96,55 @@ class Model2d3d(nn.Module):
         self.SA_modules = nn.ModuleList()
         self.SA_modules_features = nn.ModuleList()
         self.SA_modules_geom = nn.ModuleList()
+        if(self.pointnet_pointnet):
+            self.SA_modules_concat = nn.ModuleList()
         channel_in = input_channels
         if(self.fuse_no_ft_pn):
             self.fuseConv = nn.Conv1d(256, 128, kernel_size=1)
-        if(self.fusion):
+        if(self.fusion or self.pointnet_pointnet):
             channel_in = 0
             channel_in_feat = input_channels
         channel_in_geom = 0
         skip_channel_list = [channel_in]
+        skip_channel_list_feat = [channel_in_feat]
         skip_channel_list_fused = [input_channels]
+        if(self.pointnet_pointnet):
+            channel_in_concat = 256
+            skip_channel_list_concat = [channel_in_concat]
         for k in range(NPOINTS.__len__()):
             mlps = MLPS[k].copy()
-            if(self.fusion):
+            if(self.fusion or self.pointnet_pointnet):
                 mlps_feat = MLPS[k].copy()
+            if(self.pointnet_pointnet):
+                mlps_concat = MLPS[k].copy()
             channel_out = 0
             # added for concatenation of geometry and feature point clouds
             mlps_geom = mlps.copy()
             channel_out_geom = channel_out
             channel_out_feat = 0
+            if(self.pointnet_pointnet):
+                channel_out_concat = 0
+            if(self.fusion):
+                if (k == 2):
+                    channel_in += channel_in_feat
+                    print(channel_in_feat)
+
+
+
             # for idx in range(mlps_geom.__len__()):
             #     mlps_geom[idx] = [channel_in_geom] + mlps_geom[idx]
             #     channel_out_geom += mlps_geom[idx][-1]
             for idx in range(mlps.__len__()):
                 mlps[idx] = [channel_in] + mlps[idx]
                 channel_out += mlps[idx][-1]
-            if(self.fusion):
+            if(self.fusion or self.pointnet_pointnet):
                 for idx in range(mlps.__len__()):
                     mlps_feat[idx] = [channel_in_feat] + mlps_feat[idx]
                     channel_out_feat += mlps_feat[idx][-1]
+            if(self.pointnet_pointnet):
+                for idx in range(mlps.__len__()):
+                    mlps_concat[idx] = [channel_in_concat] + mlps_concat[idx]
+                    channel_out_concat += mlps_concat[idx][-1]
             self.SA_modules.append(
                 PointnetSAModuleMSG(
                     npoint=NPOINTS[k],
@@ -144,7 +166,7 @@ class Model2d3d(nn.Module):
             #          bn=bn
             #      )
             #  )
-            if(self.fusion):
+            if(self.fusion or self.pointnet_pointnet):
                 self.SA_modules_features.append(
                     PointnetSAModuleMSG(
                         npoint=NPOINTS[k],
@@ -155,26 +177,46 @@ class Model2d3d(nn.Module):
                         bn=bn
                     )
                 )
+            if(self.pointnet_pointnet):
+                self.SA_modules_concat.append(
+                    PointnetSAModuleMSG(
+                        npoint=NPOINTS[k],
+                        radii=RADIUS[k],
+                        nsamples=NSAMPLE[k],
+                        mlps=mlps_concat,
+                        use_xyz=False,
+                        bn=bn
+                    )
+                )
+
+            if(self.pointnet_pointnet):
+                skip_channel_list_concat.append(channel_out_concat)
             skip_channel_list.append(channel_out)
+            skip_channel_list_feat.append(channel_out_feat)
             skip_channel_list_fused.append(channel_out + channel_out_geom)
             channel_in = channel_out
-            if(self.fusion):
+            if(self.fusion or self.pointnet_pointnet):
                 channel_in_feat = channel_out_feat
+            if(self.pointnet_pointnet):
+                channel_in_concat = channel_out_concat
             channel_in_geom = channel_out_geom
             channel_in_fused = channel_out + channel_out_geom
 
         # feature propagation layer
         self.FP_modules = nn.ModuleList()
+        self.FP_modules_feat = nn.ModuleList()
         self.FP_modules_fused = nn.ModuleList()
+        if(self.pointnet_pointnet):
+            self.FP_modules_concat = nn.ModuleList()
 
         for k in range(FP_MLPS.__len__()):
             pre_channel = FP_MLPS[k + 1][-1] if k + 1 < len(FP_MLPS) else channel_out
             if(self.fusion):
-                if(k == FP_MLPS.__len__()-1):
-                    print(pre_channel,skip_channel_list[k])
+                print(pre_channel, skip_channel_list[k])
+                if(k == 2):
                     self.FP_modules.append(
                         PointnetFPModule(
-                            mlp=[pre_channel*2 + skip_channel_list[k]] + FP_MLPS[k],
+                            mlp=[pre_channel + skip_channel_list[k]*2] + FP_MLPS[k],
                             bn=bn
                         )
                     )
@@ -185,6 +227,28 @@ class Model2d3d(nn.Module):
                             bn=bn
                         )
                     )
+            elif(self.pointnet_pointnet):
+                pre_channel = FP_MLPS[k + 1][-1] if k + 1 < len(FP_MLPS) else channel_out_feat
+                self.FP_modules_feat.append(
+                    PointnetFPModule(
+                        mlp=[pre_channel + skip_channel_list_feat[k]] + FP_MLPS[k],
+                        bn=bn
+                    )
+                )
+                pre_channel = FP_MLPS[k + 1][-1] if k + 1 < len(FP_MLPS) else channel_out_concat
+                self.FP_modules_concat.append(
+                    PointnetFPModule(
+                        mlp=[pre_channel + skip_channel_list_concat[k]] + FP_MLPS[k],
+                        bn=bn
+                    )
+                )
+                pre_channel = FP_MLPS[k + 1][-1] if k + 1 < len(FP_MLPS) else channel_out
+                self.FP_modules.append(
+                    PointnetFPModule(
+                        mlp=[pre_channel + skip_channel_list[k]] + FP_MLPS[k],
+                        bn=bn
+                    )
+                )
             else:
                 self.FP_modules.append(
                     PointnetFPModule(
@@ -195,22 +259,22 @@ class Model2d3d(nn.Module):
 
         FP_MLPS_fused = [[256],[256],[512]]
 
-        for k in range(FP_MLPS.__len__()):
-             pre_channel_fused = FP_MLPS[k + 1][-1] if k + 1 < len(FP_MLPS) else channel_out + channel_out_geom
-
-             #if(k == 1):
-             #    pre_channel_fused = 256-96
-             #if(k == 2):
-             #    pre_channel_fused = 256
-             #if(pre_channel_fused == 2048):
-             #    pre_channel_fused = 512
-
-             self.FP_modules_fused.append(
-                 PointnetFPModule(
-                     mlp=[pre_channel_fused + skip_channel_list_fused[k]] + FP_MLPS[k],
-                     bn=bn
-                 )
-             )
+        # for k in range(FP_MLPS.__len__()):
+        #      pre_channel_fused = FP_MLPS[k + 1][-1] if k + 1 < len(FP_MLPS) else channel_out + channel_out_geom
+        #
+        #      #if(k == 1):
+        #      #    pre_channel_fused = 256-96
+        #      #if(k == 2):
+        #      #    pre_channel_fused = 256
+        #      #if(pre_channel_fused == 2048):
+        #      #    pre_channel_fused = 512
+        #
+        #      self.FP_modules_fused.append(
+        #          PointnetFPModule(
+        #              mlp=[pre_channel_fused + skip_channel_list_fused[k]] + FP_MLPS[k],
+        #              bn=bn
+        #          )
+        #      )
 
         # classifier
         cls_layers = []
@@ -284,27 +348,33 @@ class Model2d3d(nn.Module):
         # pointnet++ on geometry and features,
         # TODO split pointnet++ and process geometry and features separately in the beginning
 
-
         if self.fusion:
             concatenated_cloud = torch.cat([point_cloud, image_features], 2)
 
             # split point cloud into coordinates and features
-            xyz, features = self._break_up_pc(point_cloud)
-            l_xyz, l_features = [xyz], [features]
+
             # set abstraction
-            for i in range(len(self.SA_modules)):
-                li_xyz, li_features = self.SA_modules[i](l_xyz[i], l_features[i])
-                l_xyz.append(li_xyz)
-                l_features.append(li_features)
 
             xyz, features = self._break_up_pc(concatenated_cloud)
             l_xyz_feat, l_features_feat = [xyz], [features]
-            for i in range(len(self.SA_modules_features)):
+
+
+            for i in range(2):
+                print(l_features_feat[i].shape)
                 li_xyz_feat, li_features_feat = self.SA_modules_features[i](l_xyz_feat[i], l_features_feat[i])
                 l_xyz_feat.append(li_xyz_feat)
                 l_features_feat.append(li_features_feat)
 
-            l_features[-1] = torch.cat((l_features[-1], l_features_feat[-1]), 1)
+            xyz, features = self._break_up_pc(point_cloud)
+            l_xyz, l_features = [xyz], [features]
+            for i in range(len(self.SA_modules)):
+                li_xyz, li_features = self.SA_modules[i](l_xyz[i], l_features[i])
+                l_xyz.append(li_xyz)
+                l_features.append(li_features)
+                if(i == 1):
+                    l_features[-1] = torch.cat((l_features[-1], l_features_feat[-1]), 1)
+
+
 
             # feature propagation
             for i in range(-1, -(len(self.FP_modules) + 1), -1):
@@ -312,7 +382,59 @@ class Model2d3d(nn.Module):
                     l_xyz[i - 1], l_xyz[i], l_features[i - 1], l_features[i]
                 )
             # classifier
+
             pred_cls = self.cls_layer(l_features[0]).transpose(1, 2).contiguous()  # (B, N, num_classes)
+        elif(self.pointnet_pointnet):
+            concatenated_cloud = torch.cat([point_cloud, image_features], 2)
+
+            # split point cloud into coordinates and features
+
+            # set abstraction
+
+            xyz_feat, features_feat = self._break_up_pc(concatenated_cloud)
+            l_xyz_feat, l_features_feat = [xyz_feat], [features_feat]
+            for i in range(len(self.SA_modules_features)):
+                li_xyz_feat, li_features_feat = self.SA_modules_features[i](l_xyz_feat[i], l_features_feat[i])
+                l_xyz_feat.append(li_xyz_feat)
+                l_features_feat.append(li_features_feat)
+
+            xyz, features = self._break_up_pc(point_cloud)
+            l_xyz, l_features = [xyz], [features]
+            for i in range(len(self.SA_modules)):
+                li_xyz, li_features = self.SA_modules[i](l_xyz[i], l_features[i])
+                l_xyz.append(li_xyz)
+                l_features.append(li_features)
+
+
+            # feature propagation
+            for i in range(-1, -(len(self.FP_modules) + 1), -1):
+                l_features[i - 1] = self.FP_modules[i](
+                    l_xyz[i - 1], l_xyz[i], l_features[i - 1], l_features[i]
+                )
+
+
+            for i in range(-1, -(len(self.FP_modules_feat) + 1), -1):
+                l_features_feat[i - 1] = self.FP_modules_feat[i](
+                    l_xyz_feat[i - 1], l_xyz_feat[i], l_features_feat[i - 1], l_features_feat[i]
+                )
+            # classifier
+            concat_features = torch.cat((l_features[0],l_features_feat[0]), dim=1)
+            print(concat_features.shape)
+            l_xyz_concat, l_features_concat = [l_xyz_feat[0]], [concat_features]
+            for i in range(len(self.SA_modules_concat)):
+                li_xyz_concat, li_features_concat = self.SA_modules_concat[i](l_xyz_concat[i], l_features_concat[i])
+                l_xyz_concat.append(li_xyz_concat)
+                l_features_concat.append(li_features_concat)
+
+            for i in range(-1, -(len(self.FP_modules_concat) + 1), -1):
+                l_features_concat[i - 1] = self.FP_modules_concat[i](
+                    l_xyz_concat[i - 1], l_xyz_concat[i], l_features_concat[i - 1], l_features_concat[i]
+                )
+            pred_cls = self.cls_layer(l_features_concat[0]).transpose(1, 2).contiguous()  # (B, N, num_classes)
+
+
+
+
 
         elif(self.fuse_no_ft_pn): ## Fusion of Features together with features from Pointnet (extracted only from geometry)
 
@@ -330,7 +452,6 @@ class Model2d3d(nn.Module):
                     l_xyz[i - 1], l_xyz[i], l_features[i - 1], l_features[i]
                 )
             # classifier
-
             l_features[0] = torch.cat((l_features[0], image_features.transpose(1,2)), dim=1)
             l_features[0] = nn.functional.relu((self.fuseConv(l_features[0])))
 
