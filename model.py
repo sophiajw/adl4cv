@@ -170,10 +170,11 @@ class Model2d3d(nn.Module):
         for k in range(FP_MLPS.__len__()):
             pre_channel = FP_MLPS[k + 1][-1] if k + 1 < len(FP_MLPS) else channel_out
             if(self.fusion):
-                if(k == FP_MLPS.__len__()):
+                if(k == FP_MLPS.__len__()-1):
+                    print(pre_channel,skip_channel_list[k])
                     self.FP_modules.append(
                         PointnetFPModule(
-                            mlp=[pre_channel + skip_channel_list[k]*2] + FP_MLPS[k],
+                            mlp=[pre_channel*2 + skip_channel_list[k]] + FP_MLPS[k],
                             bn=bn
                         )
                     )
@@ -303,7 +304,7 @@ class Model2d3d(nn.Module):
                 l_xyz_feat.append(li_xyz_feat)
                 l_features_feat.append(li_features_feat)
 
-            l_features[-1] = torch.cat((l_features[-1], l_features_feat[-1]), -1)
+            l_features[-1] = torch.cat((l_features[-1], l_features_feat[-1]), 1)
 
             # feature propagation
             for i in range(-1, -(len(self.FP_modules) + 1), -1):
