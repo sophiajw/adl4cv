@@ -5,7 +5,7 @@ CONF = EasyDict()
 
 # BASE PATH
 #CONF.ROOT = "/home/lorenzlamm/Dokumente/final_new/adl4cv" # TODO change this
-CONF.ROOT = "/workspace/beachnet_train/adl4cv"
+CONF.ROOT = "/workspace/beachnet_train2/adl4cv"
 CONF.SCANNET_DIR =  "/mnt/canis/Datasets/ScanNet/public/v2/scans" # TODO change this
 #CONF.SCENE_NAMES = os.listdir('/mnt/canis/Datasets/ScanNet/public/v1/scans') # TODO change
 

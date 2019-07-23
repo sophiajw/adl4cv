@@ -69,11 +69,14 @@ def model_fn_decorator(criterion):
 # z-y-x coordinates
 class Model2d3d(nn.Module):
 
-    def __init__(self, num_classes, num_images, input_channels, intrinsic, image_dims, depth_min, depth_max, accuracy, fusion = False):
+    def __init__(self, num_classes, num_images, input_channels, intrinsic, image_dims, depth_min, depth_max, accuracy, fusion = False, fuse_no_ft_pn = True):
         # added input_channels (should be 128 from 2d features)
         # deleted grid_dims
         super(Model2d3d, self).__init__()
         self.fusion = fusion
+        self.fuse_no_ft_pn = fuse_no_ft_pn
+        if(self.fuse_no_ft_pn):
+            self.fusion = False
         self.num_classes = num_classes
         self.num_images = num_images # for pooling
         self.intrinsic = intrinsic # for projection
@@ -93,6 +96,8 @@ class Model2d3d(nn.Module):
         self.SA_modules_features = nn.ModuleList()
         self.SA_modules_geom = nn.ModuleList()
         channel_in = input_channels
+        if(self.fuse_no_ft_pn):
+            self.fuseConv = nn.Conv1d(256, 128, kernel_size=1)
         if(self.fusion):
             channel_in = 0
             channel_in_feat = input_channels
@@ -308,13 +313,36 @@ class Model2d3d(nn.Module):
             # classifier
             pred_cls = self.cls_layer(l_features[0]).transpose(1, 2).contiguous()  # (B, N, num_classes)
 
+        elif(self.fuse_no_ft_pn): ## Fusion of Features together with features from Pointnet (extracted only from geometry)
+
+            xyz, features = self._break_up_pc(point_cloud)
+            l_xyz, l_features = [xyz], [features]  # [features]
+            # set abstraction
+            for i in range(len(self.SA_modules)):
+                li_xyz, li_features = self.SA_modules[i](l_xyz[i], l_features[i])
+                l_xyz.append(li_xyz)
+                l_features.append(li_features)
+
+            # feature propagation
+            for i in range(-1, -(len(self.FP_modules) + 1), -1):
+                l_features[i - 1] = self.FP_modules[i](
+                    l_xyz[i - 1], l_xyz[i], l_features[i - 1], l_features[i]
+                )
+            # classifier
+
+            l_features[0] = torch.cat((l_features[0], image_features.transpose(1,2)), dim=1)
+            l_features[0] = nn.functional.relu((self.fuseConv(l_features[0])))
+
+            pred_cls = self.cls_layer(l_features[0]).transpose(1, 2).contiguous()  # (B, N, num_classes)
+
+
         # fuse after set abstraction (before 'upsampling')
         else:
             concatenated_cloud = torch.cat([point_cloud, image_features], 2)
 
             # split point cloud into coordinates and features
-            xyz, features = self._break_up_pc(concatenated_cloud)
-            l_xyz, l_features = [xyz], None  # [features]
+            xyz, features = self._break_up_pc(point_cloud)
+            l_xyz, l_features = [xyz], [features]  # [features]
             # set abstraction
             for i in range(len(self.SA_modules)):
                 li_xyz, li_features = self.SA_modules[i](l_xyz[i], l_features[i])
