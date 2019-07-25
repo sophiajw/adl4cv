@@ -27,11 +27,14 @@ from lib.solver import Solver
 from lib.dataset import ScannetDataset, ScannetDatasetWholeScene, collate_random, collate_wholescene
 from lib.loss import WeightedCrossEntropyLoss
 from lib.config import CONF
+from lib.pc_util import point_cloud_label_to_surface_voxel_label_fast
 
 log = {phase: {} for phase in ["train", "val"]}
 ENET_TYPES = {'scannet': (41, [0.496342, 0.466664, 0.440796], [0.277856, 0.28623, 0.291129])}  #classes, color mean/std 
 global_iter_id = 0
 total_iter = {}
+
+visualize_test_scene = True
 
 
 ITER_REPORT_TEMPLATE = """
@@ -170,13 +173,13 @@ grid_centerX = opt.grid_dimX // 2
 grid_centerY = opt.grid_dimY // 2
 color_mean = ENET_TYPES[opt.model2d_type][1]
 color_std = ENET_TYPES[opt.model2d_type][2]
-input_channels = 0
+input_channels = 128
 num_points = opt.num_points
 
 # create enet and pointnet++ models
 num_classes = opt.num_classes
 model2d_fixed, model2d_trainable, model2d_classifier = create_enet_for_3d(ENET_TYPES[opt.model2d_type], opt.model2d_path, num_classes)
-model = Model2d3d(num_classes, num_images, input_channels, intrinsic, proj_image_dims, opt.depth_min, opt.depth_max, opt.accuracy, fusion=False, fuse_no_ft_pn=True)
+model = Model2d3d(num_classes, num_images, input_channels, intrinsic, proj_image_dims, opt.depth_min, opt.depth_max, opt.accuracy, fusion=True, fuseAtPosition = 2, fuse_no_ft_pn=False, pointnet_pointnet = False)
 projection = ProjectionHelper(intrinsic, opt.depth_min, opt.depth_max, proj_image_dims, opt.accuracy)
 # create loss
 criterion_weights = torch.ones(num_classes) 
@@ -214,9 +217,10 @@ model_fn = model_fn_decorator(nn.CrossEntropyLoss())
 #     is_wholescene = True
 # else:
 is_wholescene = False
-train_dataset = Indoor3DSemSeg(num_points, root=opt.input_folder_3d, train=True)
+train_dataset = Indoor3DSemSeg(num_points, root=opt.input_folder_3d, train=True, overfit=False)
 val_dataset = Indoor3DSemSeg(num_points, root=opt.input_folder_3d, train=False)
-
+if(visualize_test_scene):
+    visualize_dataset = Indoor3DSemSeg(num_points, root=opt.input_folder_3d, train=False, overfit=False, visualize=True)
 #all_frames = np.zeros((1000,1))
 #for i in range(len(train_dataset)):
 #    all_frames[i] = train_dataset[i][3][0]
@@ -227,7 +231,7 @@ val_dataset = Indoor3DSemSeg(num_points, root=opt.input_folder_3d, train=False)
 
 val_dataloader = DataLoader(
     val_dataset,
-    batch_size=4,
+    batch_size=1,
     shuffle=True,
     pin_memory=True,
     num_workers=8
@@ -239,6 +243,15 @@ train_dataloader = DataLoader(
     num_workers=8,
     shuffle=True
 )
+if(visualize_test_scene):
+    visualize_dataloader = DataLoader(
+        visualize_dataset,
+        batch_size=opt.batch_size,
+        pin_memory=True,
+        num_workers=1,
+        shuffle=False
+    )
+
 dataloader = {
     "train": train_dataloader,
     "val": val_dataloader
@@ -307,8 +320,8 @@ def train(epoch, iter, log_file, train_dataloader, log_file_2d):
     tempTime = time.time()
 
     for t, data in enumerate(train_dataloader):
-        if(t == 5):
-            break
+        if(t % 10 == 0):
+            print(t, "/", len(train_dataloader))
         ## Logs for current training iteration
         running_log = {
             # loss
@@ -504,15 +517,15 @@ def test(epoch, iter, log_file, val_dataloader, log_file_2d):
     start = time.time()
     num_classes = opt.num_classes
 
-    #points, labels, frames = data_util.load_hdf5_data(val_file, num_classes)
-    #num_points = points.shape[1]
+    # points, labels, frames = data_util.load_hdf5_data(val_file, num_classes)
+    # num_points = points.shape[1]
 
-    #frames = frames[:, :2+num_images]
-    #num_samples = points.shape[0]
+    # frames = frames[:, :2+num_images]
+    # num_samples = points.shape[0]
     # shuffle
-    #indices = torch.randperm(num_samples).long().split(batch_size)
+    # indices = torch.randperm(num_samples).long().split(batch_size)
     # remove last mini-batch so that all the batches have equal size
-    #indices = indices[:-1]
+    # indices = indices[:-1]
 
     with torch.no_grad():
         depth_images = torch.cuda.FloatTensor(batch_size * num_images, proj_image_dims[1], proj_image_dims[0])
@@ -520,8 +533,7 @@ def test(epoch, iter, log_file, val_dataloader, log_file_2d):
         camera_poses = torch.cuda.FloatTensor(batch_size * num_images, 4, 4)
         label_images = torch.cuda.LongTensor(batch_size * num_images, proj_image_dims[1], proj_image_dims[0])
 
-
-        for t,data in enumerate(val_dataloader):
+        for t, data in enumerate(val_dataloader):
             running_log = {
                 # loss
                 "loss": 0,
@@ -536,8 +548,8 @@ def test(epoch, iter, log_file, val_dataloader, log_file_2d):
             num_points = points.shape[1]
 
             frames = frames[:, :2 + num_images]
-            #num_samples = points.shape[0]
-            #targets = labels[v].cuda()
+            # num_samples = points.shape[0]
+            # targets = labels[v].cuda()
             # valid targets
             mask = targets.view(-1).data.clone()
             for k in range(num_classes):
@@ -547,7 +559,8 @@ def test(epoch, iter, log_file, val_dataloader, log_file_2d):
             if len(maskindices.shape) == 0:
                 continue
             # get 2d data
-            data_util.load_frames_multi(opt.data_path_2d, frames, depth_images, color_images, camera_poses, color_mean, color_std)
+            data_util.load_frames_multi(opt.data_path_2d, frames, depth_images, color_images, camera_poses, color_mean,
+                                        color_std)
             if opt.use_proxy_loss:
                 data_util.load_label_frames(opt.data_path_2d, frames, label_images, num_classes)
                 mask2d = label_images.view(-1).clone()
@@ -559,9 +572,10 @@ def test(epoch, iter, log_file, val_dataloader, log_file_2d):
                     continue  # nothing to optimize for here
 
             # compute projection mapping
-            proj_mapping = [projection.compute_projection(p, d, c, num_points) for p, d, c in zip(points, depth_images, camera_poses)]
-            if None in proj_mapping: #invalid sample
-                #print '(invalid sample)'
+            proj_mapping = [projection.compute_projection(p, d, c, num_points) for p, d, c in
+                            zip(points, depth_images, camera_poses)]
+            if None in proj_mapping:  # invalid sample
+                # print '(invalid sample)'
                 continue
             proj_mapping = list(zip(*proj_mapping))
             proj_ind_3d = torch.stack(proj_mapping[0])
@@ -588,7 +602,8 @@ def test(epoch, iter, log_file, val_dataloader, log_file_2d):
                 pred_ids = torch.arange(preds.view(-1).size(0))[preds.view(-1) == i].tolist()
                 target_ids = torch.arange(targets.view(-1).size(0))[targets.view(-1) == i].tolist()
                 if len(target_ids) == 0:
-                    if (len(pred_ids) != 0):  ## added these 2 lines: Before, we did not incorporate classes that were predicted, but did not appear.
+                    if (len(
+                            pred_ids) != 0):  ## added these 2 lines: Before, we did not incorporate classes that were predicted, but did not appear.
                         miou.append(0)  ## Not sure if it makes sense to include this
                     continue
                 num_correct = len(set(pred_ids).intersection(set(target_ids)))
@@ -613,15 +628,15 @@ def test(epoch, iter, log_file, val_dataloader, log_file_2d):
                 predictions = predictions.view(-1)
                 k = label_images.view(-1)
                 confusion2d_val.add(torch.index_select(predictions, 0, mask2d), torch.index_select(k, 0, mask2d))
-            
+
             # confusion
             y = output.data
-            y = y.view(int(y.nelement()/y.size(2)), num_classes)[:, :-1]
+            y = y.view(int(y.nelement() / y.size(2)), num_classes)[:, :-1]
             _, predictions = y.max(1)
             predictions = predictions.view(-1)
             k = targets.data.view(-1)
             confusion_val.add(torch.index_select(predictions, 0, maskindices), torch.index_select(k, 0, maskindices))
-            if(epoch % 5 == 0):
+            if (epoch % 5 == 0):
                 model_root = os.path.join(CONF.OUTPUT_ROOT, stamp)
                 torch.save(model, os.path.join(model_root, str(epoch) + "model.pth"))
 
@@ -629,8 +644,126 @@ def test(epoch, iter, log_file, val_dataloader, log_file_2d):
     took = end - start
     evaluate_confusion(confusion_val, test_loss, epoch, iter, took, 'Test', log_file)
     if opt.use_proxy_loss:
-         evaluate_confusion(confusion2d_val, test_loss_2d, epoch, iter, took, 'Test2d', log_file_2d)
+        evaluate_confusion(confusion2d_val, test_loss_2d, epoch, iter, took, 'Test2d', log_file_2d)
     return test_loss, test_loss_2d
+
+
+def test_for_visual(epoch, iter, log_file, vis_dataloader, log_file_2d):
+    model2d_trainable_dict = torch.load("/home/lorenzlamm/Dokumente/final_new/adl4cv/models/model2d-epoch-15.pth")
+    model2d_fixed_dict = torch.load("/home/lorenzlamm/Dokumente/final_new/adl4cv/models/model2dfixed.pth")
+    model_dict = torch.load("/home/lorenzlamm/Dokumente/final_new/adl4cv/models/model-epoch-15.pth")
+
+    model.load_state_dict(model_dict)
+    model2d_fixed.load_state_dict(model2d_fixed_dict)
+    model2d_trainable.load_state_dict(model2d_trainable_dict)
+    model.eval()
+    model2d_fixed.eval()
+    model2d_trainable.eval()
+    if opt.use_proxy_loss:
+        model2d_classifier.eval()
+
+
+    start = time.time()
+    num_classes = opt.num_classes
+
+    # points, labels, frames = data_util.load_hdf5_data(val_file, num_classes)
+    # num_points = points.shape[1]
+
+    # frames = frames[:, :2+num_images]
+    # num_samples = points.shape[0]
+    # shuffle
+    # indices = torch.randperm(num_samples).long().split(batch_size)
+    # remove last mini-batch so that all the batches have equal size
+    # indices = indices[:-1]
+    scene = torch.zeros(11*4096)
+    scene_labels = torch.zeros(11*4096)
+    scene_points = torch.zeros(11*4096,3)
+    with torch.no_grad():
+        depth_images = torch.cuda.FloatTensor(batch_size * num_images, proj_image_dims[1], proj_image_dims[0])
+        color_images = torch.cuda.FloatTensor(batch_size * num_images, 3, input_image_dims[1], input_image_dims[0])
+        camera_poses = torch.cuda.FloatTensor(batch_size * num_images, 4, 4)
+        label_images = torch.cuda.LongTensor(batch_size * num_images, proj_image_dims[1], proj_image_dims[0])
+
+        for t, data in enumerate(vis_dataloader):
+            points, test, targets, frames, weights, fetch_time = data
+            scene_points[t*4096:(t+1)*4096] = points
+            points, test, targets, weights = points.cuda(), test.cuda(), targets.cuda(), weights.cuda()
+            scene_labels[t*4096:(t+1)*4096] = targets.view(-1)
+            num_points = points.shape[1]
+            frames = frames[:, :2 + num_images]
+            mask = targets.view(-1).data.clone()
+            for k in range(num_classes):
+                if criterion_weights[k] == 0:
+                    mask[mask.eq(k)] = 0
+            maskindices = mask.nonzero().squeeze()
+            if len(maskindices.shape) == 0:
+                print("Skipped one")
+            # get 2d data
+            data_util.load_frames_multi(opt.data_path_2d, frames, depth_images, color_images, camera_poses, color_mean,
+                                        color_std)
+            if opt.use_proxy_loss:
+                data_util.load_label_frames(opt.data_path_2d, frames, label_images, num_classes)
+                mask2d = label_images.view(-1).clone()
+                for k in range(num_classes):
+                    if criterion_weights[k] == 0:
+                        mask2d[mask2d.eq(k)] = 0
+                mask2d = mask2d.nonzero().squeeze()
+                if (len(mask2d.shape) == 0):
+                    print("Skipped one")
+                    continue  # nothing to optimize for here
+
+            # compute projection mapping
+            proj_mapping = [projection.compute_projection(p, d, c, num_points) for p, d, c in
+                            zip(points, depth_images, camera_poses)]
+            if None in proj_mapping:  # invalid sample
+                print ('(invalid sample)')
+                continue
+
+            proj_mapping = list(zip(*proj_mapping))
+            proj_ind_3d = torch.stack(proj_mapping[0])
+            proj_ind_2d = torch.stack(proj_mapping[1])
+            # 2d
+            imageft_fixed = model2d_fixed(color_images)
+            imageft = model2d_trainable(imageft_fixed)
+            if opt.use_proxy_loss:
+                ft2d = model2d_classifier(imageft)
+                ft2d = ft2d.permute(0, 2, 3, 1).contiguous()
+            # 2d/3d
+            input3d = points.cuda()
+            output = model(input3d, imageft, proj_ind_3d, proj_ind_2d)
+            preds = torch.argmax(output, 2)
+            scene[t*4096:(t+1)*4096] = preds.squeeze()
+            loss = criterion(output.view(-1, num_classes), targets.view(-1), weights.view(-1))
+
+
+            if opt.use_proxy_loss:
+                loss2d = criterion2d(ft2d.view(-1, num_classes), label_images.view(-1))
+                # confusion
+                y = ft2d.data
+                y = y.view(-1, num_classes)[:, :-1]
+                _, predictions = y.max(1)
+                predictions = predictions.view(-1)
+                k = label_images.view(-1)
+                confusion2d_val.add(torch.index_select(predictions, 0, mask2d), torch.index_select(k, 0, mask2d))
+
+            # confusion
+            y = output.data
+            y = y.view(int(y.nelement() / y.size(2)), num_classes)[:, :-1]
+            _, predictions = y.max(1)
+            predictions = predictions.view(-1)
+            k = targets.data.view(-1)
+            confusion_val.add(torch.index_select(predictions, 0, maskindices), torch.index_select(k, 0, maskindices))
+
+
+    end = time.time()
+    took = end - start
+    scene = scene.unsqueeze(1)
+    #scene_points = scene_points.view(11*4096,3)
+    gt_scene = torch.cat ((scene_points, scene_labels.unsqueeze(1)),dim=1)
+    out_scene = torch.cat((scene_points,scene), dim=1)
+
+
+    return out_scene, gt_scene
 
 
 def evaluate_confusion(confusion_matrix, loss, epoch, iter, time, which, log_file):
@@ -654,7 +787,209 @@ def evaluate_confusion(confusion_matrix, loss, epoch, iter, time, which, log_fil
         which, epoch, iter, torch.mean(torch.Tensor(loss)), instance_acc, avg_acc, mean_iou, time))
 
 
+def compute_acc(coords, preds, targets, weights):
+    NUM_CLASSES = 21
+    total_correct = 0
+    total_seen = 0
+    total_seen_class = [0 for _ in range(NUM_CLASSES)]
+    total_correct_class = [0 for _ in range(NUM_CLASSES)]
+
+    total_correct_vox = 0
+    total_seen_vox = 0
+    total_seen_class_vox = [0 for _ in range(NUM_CLASSES)]
+    total_correct_class_vox = [0 for _ in range(NUM_CLASSES)]
+
+    labelweights = np.zeros(NUM_CLASSES)
+    labelweights_vox = np.zeros(NUM_CLASSES)
+
+    correct = np.sum((preds == targets) & (targets>0) & (weights>0)) # evaluate only on 20 categories but not unknown
+    total_correct += correct
+    total_seen += np.sum((targets>0) & (weights>0))
+    tmp,_ = np.histogram(targets,range(22))
+    labelweights += tmp
+    for l in range(NUM_CLASSES):
+        total_seen_class[l] += np.sum((targets==l) & (weights>0))
+        total_correct_class[l] += np.sum((preds==l) & (targets==l) & (weights>0))
+    coords = np.expand_dims(coords,0)
+    targets = np.expand_dims(targets,0)
+    weights = np.expand_dims(weights,0)
+    preds = np.expand_dims(preds,0)
+    for b in range(coords.shape[0]):
+
+        _, uvlabel, _ = point_cloud_label_to_surface_voxel_label_fast(coords[b,weights[b,:]>0,:], np.concatenate((np.expand_dims(targets[b,weights[b,:]>0],1),np.expand_dims(preds[b,weights[b,:]>0],1)),axis=1), res=0.02)
+        total_correct_vox += np.sum((uvlabel[:,0]==uvlabel[:,1])&(uvlabel[:,0]>0))
+        total_seen_vox += np.sum(uvlabel[:,0]>0)
+        tmp,_ = np.histogram(uvlabel[:,0],range(22))
+        labelweights_vox += tmp
+        for l in range(NUM_CLASSES):
+            total_seen_class_vox[l] += np.sum(uvlabel[:,0]==l)
+            total_correct_class_vox[l] += np.sum((uvlabel[:,0]==l) & (uvlabel[:,1]==l))
+
+    pointacc = total_correct / float(total_seen)
+    voxacc = total_correct_vox / float(total_seen_vox)
+
+    labelweights = labelweights[1:].astype(np.float32)/np.sum(labelweights[1:].astype(np.float32))
+    labelweights_vox = labelweights_vox[1:].astype(np.float32)/np.sum(labelweights_vox[1:].astype(np.float32))
+    caliweights = np.array([0.388,0.357,0.038,0.033,0.017,0.02,0.016,0.025,0.002,0.002,0.002,0.007,0.006,0.022,0.004,0.0004,0.003,0.002,0.024,0.029])
+    voxcaliacc = np.average(np.array(total_correct_class_vox[1:])/(np.array(total_seen_class_vox[1:],dtype=np.float)+1e-6),weights=caliweights)
+
+    return pointacc, voxacc, voxcaliacc
+
+def eval_one_batch(args, data):
+    # unpack
+
+    # feed
+    points, test, targets, frames, weights, fetch_time = data
+    points, test, targets, weights = points.cuda(), test.cuda(), targets.cuda(), weights.cuda()
+    num_points = points.shape[1]
+    frames = frames[:, :2 + num_images]
+    mask = targets.view(-1).data.clone()
+    for k in range(num_classes):
+        if criterion_weights[k] == 0:
+            mask[mask.eq(k)] = 0
+    maskindices = mask.nonzero().squeeze()
+    if len(maskindices.shape) == 0:
+        print("Skipped one")
+    # get 2d data
+
+    depth_images = torch.cuda.FloatTensor(batch_size * num_images, proj_image_dims[1], proj_image_dims[0])
+    color_images = torch.cuda.FloatTensor(batch_size * num_images, 3, input_image_dims[1], input_image_dims[0])
+    camera_poses = torch.cuda.FloatTensor(batch_size * num_images, 4, 4)
+    label_images = torch.cuda.LongTensor(batch_size * num_images, proj_image_dims[1], proj_image_dims[0])
+
+    data_util.load_frames_multi(opt.data_path_2d, frames, depth_images, color_images, camera_poses, color_mean,
+                                color_std)
+    if opt.use_proxy_loss:
+        data_util.load_label_frames(opt.data_path_2d, frames, label_images, num_classes)
+        mask2d = label_images.view(-1).clone()
+        for k in range(num_classes):
+            if criterion_weights[k] == 0:
+                mask2d[mask2d.eq(k)] = 0
+        mask2d = mask2d.nonzero().squeeze()
+        if (len(mask2d.shape) == 0):
+            print("Skipped one")
+
+    # compute projection mapping
+    proj_mapping = [projection.compute_projection(p, d, c, num_points) for p, d, c in
+                    zip(points, depth_images, camera_poses)]
+    if None in proj_mapping:  # invalid sample
+        print('(invalid sample)')
+
+    proj_mapping = list(zip(*proj_mapping))
+    proj_ind_3d = torch.stack(proj_mapping[0])
+    proj_ind_2d = torch.stack(proj_mapping[1])
+    # 2d
+    imageft_fixed = model2d_fixed(color_images)
+    imageft = model2d_trainable(imageft_fixed)
+    if opt.use_proxy_loss:
+        ft2d = model2d_classifier(imageft)
+        ft2d = ft2d.permute(0, 2, 3, 1).contiguous()
+    # 2d/3d
+    input3d = points.cuda()
+    output = model(input3d, imageft, proj_ind_3d, proj_ind_2d)
+    preds = torch.argmax(output, 2)
+
+
+
+    # eval
+    coords = points.squeeze(0).cpu().numpy()     # (CK, N, C)
+    preds = preds.squeeze(0).cpu().numpy()       # (CK, N, C)
+    targets = targets.squeeze(0).cpu().numpy()   # (CK, N, C)
+    weights = weights.squeeze(0).cpu().numpy()   # (CK, N, C)
+    pointacc, voxacc, voxcaliacc = compute_acc(coords, preds, targets, weights)
+
+    return pointacc, voxacc, voxcaliacc
+
+
+def eval_wholescene(args, dataloader):
+    # init
+    pointacc_list = []
+    voxacc_list = []
+    voxcaliacc_list = []
+
+    # iter
+    for t,data in enumerate(dataloader):
+        # feed
+        print(t, "/", len(dataloader))
+        pointacc, voxacc, voxcaliacc = eval_one_batch(args, data)
+
+        # dump
+        pointacc_list.append(pointacc)
+        voxacc_list.append(voxacc)
+        voxcaliacc_list.append(voxcaliacc)
+
+    return pointacc_list, voxacc_list, voxcaliacc_list
+
+
+def evaluate(args):
+    # prepare data
+    print("preparing data...")
+    #scene_list = get_scene_list("python/Mesh2Loc/data/scannetv2_val.txt")
+
+
+    test_dataset = Indoor3DSemSeg(num_points, root=opt.input_folder_3d, train=False, overfit=False,
+                                           visualize=False, test=True)
+    test_dataloader = DataLoader(
+        test_dataset,
+        batch_size=1,
+        shuffle=False,
+        pin_memory=True,
+        num_workers=1
+    )
+
+    model2d_trainable_dict = torch.load("/home/lorenzlamm/Dokumente/final_new/adl4cv/models/model2d-epoch-15.pth")
+    model2d_fixed_dict = torch.load("/home/lorenzlamm/Dokumente/final_new/adl4cv/models/model2dfixed.pth")
+    model_dict = torch.load("/home/lorenzlamm/Dokumente/final_new/adl4cv/models/model-epoch-15.pth")
+
+    model.load_state_dict(model_dict)
+    model2d_fixed.load_state_dict(model2d_fixed_dict)
+    model2d_trainable.load_state_dict(model2d_trainable_dict)
+    model.eval()
+    model2d_fixed.eval()
+    model2d_trainable.eval()
+    if opt.use_proxy_loss:
+        model2d_classifier.eval()
+
+    start = time.time()
+    num_classes = opt.num_classes
+
+
+    # eval
+    print("evaluating...")
+    pointacc_list, voxacc_list, voxcaliacc_list = eval_wholescene(args, test_dataloader)
+    avg_pointacc = np.mean(pointacc_list)
+    avg_voxacc = np.mean(voxacc_list)
+    avg_voxcaliacc = np.mean(voxcaliacc_list)
+
+    # report
+    print()
+    print("Point accuracy: {}".format(avg_pointacc))
+    print("Voxel-based point accuracy: {}".format(avg_voxacc))
+    print("Calibrated point accuracy: {}".format(avg_voxcaliacc))
+
+
+
+
+
 def main():
+
+    ## COmment the following is not evaluating:
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--folder', type=str, help='output folder containing the best model from training',
+                        required=False)
+    parser.add_argument('--batch_size', type=int, help='size of the batch/chunk', default=8)
+    parser.add_argument('--gpu', type=str, help='gpu', default='0')
+    args = parser.parse_args()
+    args.folder = "/home/lorenzlamm/Dokumente/DavesPointnetClone/Pointnet2.ScanNet"
+    # setting
+    os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
+    os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
+
+    evaluate(args)
+    return
+    #### Stop commenting
+
+
     stamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
     tb_path = os.path.join(CONF.OUTPUT_ROOT, stamp, "tensorboard")
 
@@ -700,6 +1035,10 @@ def main():
         #for k in range(len(train_dataloader)):
         k = 1234
         print('Epoch: {}\tFile: {}/{}\t{}'.format(epoch, k, len(train_dataloader), train_dataloader))
+        what, gt = test_for_visual(epoch, iter, log_file, visualize_dataloader, log_file_2d)
+        print(what.shape, "<-----")
+        np.savetxt("/home/lorenzlamm/Dokumente/poster_pres/scene0600_00.txt", what, delimiter=',')
+        np.savetxt("/home/lorenzlamm/Dokumente/poster_pres/scene0600_00_gt.txt", gt, delimiter=',')
         loss, iter, loss2d = train(epoch, iter, log_file, train_dataloader, log_file_2d)
         train_loss.extend(loss)
         if loss2d:
@@ -735,6 +1074,9 @@ def main():
         log_file_2d.close()
         if has_val:
             log_file_2d_val.close()
+
+
+
 
 def train_report(epoch_id):
     fetch_time = [time for time in log["train"][epoch_id]["fetch"]]

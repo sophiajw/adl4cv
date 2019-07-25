@@ -26,14 +26,17 @@ def _load_data_file(name):
     f = h5py.File(name)
     data = f["points"][:]
     label = f["labels"][:]
+    print(f["corresponding_images"])
     frames = f["corresponding_images"][:]
     return data, label, frames
 
 
 class Indoor3DSemSeg(data.Dataset):
-    def __init__(self, num_points, root, train=True, download=True, data_precent=1.0):
+    def __init__(self, num_points, root, train=True, download=True, data_precent=1.0, overfit=False, visualize=False, test=False):
         super().__init__()
         BASE_DIR = root
+        self.overfit = overfit
+        self.visualize = visualize
         self.data_precent = data_precent
         self.folder = "bn_train_data"
         self.data_dir = os.path.join(BASE_DIR, self.folder)
@@ -55,6 +58,11 @@ class Indoor3DSemSeg(data.Dataset):
             subprocess.check_call(shlex.split("rm {}".format(zipfile)))
 
         self.train, self.num_points = train, num_points
+        self.test = test
+        if(self.test):
+            self.train=False
+            self.visualize=False
+            self.overfit=False
 
         if(self.train):
             with open(os.path.join(root, "all_files_train.txt"), 'w+') as f:
@@ -63,13 +71,28 @@ class Indoor3DSemSeg(data.Dataset):
                     if(entry.startswith("train")):
                         f.writelines(os.path.join(root, entry + "\n"))
             all_files = _get_data_files(os.path.join(root, "all_files_train.txt"))
-        else:
+        elif(self.test):
+            with open(os.path.join(root, "all_files_test.txt"), 'w+') as f:
+                list = os.listdir(root)
+                for entry in list:
+                    if(entry.startswith("test")):
+                        f.writelines(os.path.join(root, entry + "\n"))
+            all_files = _get_data_files(os.path.join(root, "all_files_test.txt"))
+        elif(not self.visualize):
             with open(os.path.join(root, "all_files_val.txt"), 'w+') as f:
                 list = os.listdir(root)
                 for entry in list:
                     if(entry.startswith("val")):
                         f.writelines(os.path.join(root,entry + "\n"))
             all_files = _get_data_files(os.path.join(root, "all_files_val.txt"))
+        else:
+            with open(os.path.join(root, "all_files_vis.txt"), 'w+') as f:
+                list = os.listdir(root)
+                for entry in list:
+                    if(entry.startswith("scene")):
+                        f.writelines(os.path.join(root,entry + "\n"))
+            all_files = _get_data_files(os.path.join(root, "all_files_vis.txt"))
+
 
         data_batchlist, label_batchlist, frames_batchlist = [], [], []
         for f in all_files:
@@ -78,18 +101,29 @@ class Indoor3DSemSeg(data.Dataset):
                 data = np.expand_dims(data, axis=0)
                 label = np.expand_dims(label, axis=0)
                 frames = np.expand_dims(frames, axis=0)
-            data_batchlist.append(data)
-            label_batchlist.append(label)
-            frames_batchlist.append(frames)
+            #if(self.visualize):
+            if(self.overfit):
+                for i in range(100):
+                    data_batchlist.append(data[:1])
+                    label_batchlist.append(label[:1])
+                    frames_batchlist.append(frames[:1])
+                break
+            else:
+                data_batchlist.append(data)
+                label_batchlist.append(label)
+                frames_batchlist.append(frames)
 
 
 
         data_batches = np.concatenate(data_batchlist, 0)
         labels_batches = np.concatenate(label_batchlist, 0)
         frames_batches = np.concatenate(frames_batchlist, 0)
+        if(self.visualize):
+            print(frames_batches)
+        #print(frames_batches.shape)
+        #print(np.unique(frames_batches[:,0]))
 
-
-
+        print(data_batches.shape)
         labels_unique = np.unique(labels_batches)
         labels_unique_count = np.stack([(labels_batches == labels_u).sum() for labels_u in labels_unique])
 
@@ -105,6 +139,8 @@ class Indoor3DSemSeg(data.Dataset):
                         count += 1
             else:
                 self.labelweights[c] = 1
+        print("Label Weights for split: ", self.train)
+        print(self.labelweights)
         # self.labelweights = labels_unique_count / (labels_unique_count.sum())
         for c in range(21):
             if (c == 0):
