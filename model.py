@@ -69,12 +69,13 @@ def model_fn_decorator(criterion):
 # z-y-x coordinates
 class Model2d3d(nn.Module):
 
-    def __init__(self, num_classes, num_images, input_channels, intrinsic, image_dims, depth_min, depth_max, accuracy, fusion = False, fuse_no_ft_pn = True, pointnet_pointnet = False):
+    def __init__(self, num_classes, num_images, input_channels, intrinsic, image_dims, depth_min, depth_max, accuracy, fusion = False, fuseAtPosition=2, fuse_no_ft_pn = True, pointnet_pointnet = False):
         # added input_channels (should be 128 from 2d features)
         # deleted grid_dims
         super(Model2d3d, self).__init__()
         self.pointnet_pointnet = pointnet_pointnet
         self.fusion = fusion
+        self.fuse_at_position = fuseAtPosition
         self.fuse_no_ft_pn = fuse_no_ft_pn
         if(self.fuse_no_ft_pn):
             self.fusion = False
@@ -101,9 +102,10 @@ class Model2d3d(nn.Module):
         channel_in = input_channels
         if(self.fuse_no_ft_pn):
             self.fuseConv = nn.Conv1d(256, 128, kernel_size=1)
+        channel_in = input_channels
         if(self.fusion or self.pointnet_pointnet):
             channel_in = 0
-            channel_in_feat = input_channels
+        channel_in_feat = input_channels
         channel_in_geom = 0
         skip_channel_list = [channel_in]
         skip_channel_list_feat = [channel_in_feat]
@@ -125,9 +127,8 @@ class Model2d3d(nn.Module):
             if(self.pointnet_pointnet):
                 channel_out_concat = 0
             if(self.fusion):
-                if (k == 2):
+                if (k == fuseAtPosition):
                     channel_in += channel_in_feat
-                    print(channel_in_feat)
 
 
 
@@ -212,8 +213,7 @@ class Model2d3d(nn.Module):
         for k in range(FP_MLPS.__len__()):
             pre_channel = FP_MLPS[k + 1][-1] if k + 1 < len(FP_MLPS) else channel_out
             if(self.fusion):
-                print(pre_channel, skip_channel_list[k])
-                if(k == 2):
+                if(k == self.fuse_at_position):
                     self.FP_modules.append(
                         PointnetFPModule(
                             mlp=[pre_channel + skip_channel_list[k]*2] + FP_MLPS[k],
@@ -359,8 +359,7 @@ class Model2d3d(nn.Module):
             l_xyz_feat, l_features_feat = [xyz], [features]
 
 
-            for i in range(2):
-                print(l_features_feat[i].shape)
+            for i in range(self.fuse_at_position):
                 li_xyz_feat, li_features_feat = self.SA_modules_features[i](l_xyz_feat[i], l_features_feat[i])
                 l_xyz_feat.append(li_xyz_feat)
                 l_features_feat.append(li_features_feat)
@@ -371,7 +370,7 @@ class Model2d3d(nn.Module):
                 li_xyz, li_features = self.SA_modules[i](l_xyz[i], l_features[i])
                 l_xyz.append(li_xyz)
                 l_features.append(li_features)
-                if(i == 1):
+                if(i == self.fuse_at_position-1):
                     l_features[-1] = torch.cat((l_features[-1], l_features_feat[-1]), 1)
 
 
@@ -417,10 +416,11 @@ class Model2d3d(nn.Module):
                 l_features_feat[i - 1] = self.FP_modules_feat[i](
                     l_xyz_feat[i - 1], l_xyz_feat[i], l_features_feat[i - 1], l_features_feat[i]
                 )
+
             # classifier
             concat_features = torch.cat((l_features[0],l_features_feat[0]), dim=1)
-            print(concat_features.shape)
             l_xyz_concat, l_features_concat = [l_xyz_feat[0]], [concat_features]
+            print("Last layer")
             for i in range(len(self.SA_modules_concat)):
                 li_xyz_concat, li_features_concat = self.SA_modules_concat[i](l_xyz_concat[i], l_features_concat[i])
                 l_xyz_concat.append(li_xyz_concat)
