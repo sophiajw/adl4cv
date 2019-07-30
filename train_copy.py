@@ -34,8 +34,8 @@ ENET_TYPES = {'scannet': (41, [0.496342, 0.466664, 0.440796], [0.277856, 0.28623
 global_iter_id = 0
 total_iter = {}
 
-visualize_test_scene = True
-
+visualize_test_scene = False
+train_on_Loros_Laptop = False
 
 ITER_REPORT_TEMPLATE = """
 ----------------------iter: [{global_iter_id}/{total_iter}]----------------------
@@ -78,12 +78,22 @@ parser = argparse.ArgumentParser()
 # data paths
 parser.add_argument('--train_data_list', required=False, default='/media/lorenzlamm/My Book/processing/final_training_files/hdf5_files.txt', help='path to file list of h5 train data')
 #parser.add_argument('--input_folder_3d', required=False, default='/workspace/beachnet_train/bn_train_data')
-parser.add_argument('--input_folder_3d', required=False, default='/home/lorenzlamm/Dokumente/sampleBeachData/finalContainers')
+#parser.add_argument('--input_folder_3d', required=False, default='/home/lorenzlamm/Dokumente/sampleBeachData/final_containers_new')
+if(train_on_Loros_Laptop):
+    parser.add_argument('--input_folder_3d', required=False, default='/media/lorenzlamm/My Book/Final_Scannet_Data/final_containers')
+    #parser.add_argument('--input_folder_3d', required=False, default='/home/lorenzlamm/Dokumente/sampleBeachData/final_containers_new')
+else:
+    parser.add_argument('--input_folder_3d', required=False, default='/workspace/beachnet_train/bn_train_data')
 
 parser.add_argument('--val_data_list', default='', help='path to file list of h5 val data')
 parser.add_argument('--output', default='./logs', help='folder to output model checkpoints')
 #parser.add_argument('--data_path_2d', required=False, default='/workspace/beachnet_train/bn_train_data', help='path to 2d train data')
-parser.add_argument('--data_path_2d', required=False, default='/home/lorenzlamm/Dokumente/sampleBeachData/2d_data', help='path to 2d train data')
+#parser.add_argument('--data_path_2d', required=False, default='/home/lorenzlamm/Dokumente/sampleBeachData/2d_data', help='path to 2d train data')
+if(train_on_Loros_Laptop):
+    parser.add_argument('--data_path_2d', required=False, default='/media/lorenzlamm/My Book/Scannet/out_images', help='path to 2d train data')
+else:
+    parser.add_argument('--data_path_2d', required=False, default='/workspace/beachnet_train/bn_train_data',
+                        help='path to 2d train data')
 
 parser.add_argument('--class_weight_file', default='', help='path to histogram over classes')
 # train params
@@ -105,8 +115,11 @@ parser.add_argument('--weight_decay_pointnet', type=float, default=0, help='L2 r
 parser.add_argument('--retrain', default='', help='model to load')
 parser.add_argument('--start_epoch', type=int, default=0, help='start epoch')
 parser.add_argument('--model2d_type', default='scannet', help='which enet (scannet)')
-#parser.add_argument('--model2d_path', required=False, default='/workspace/beachnet_train/bn_train_data/scannetv2_enet.pth', help='path to enet model')
-parser.add_argument('--model2d_path', required=False, default='//home/lorenzlamm/Dokumente/final_new/adl4cv/scannetv2_enet.pth', help='path to enet model')
+if(train_on_Loros_Laptop):
+    parser.add_argument('--model2d_path', required=False, default='//home/lorenzlamm/Dokumente/final_new/adl4cv/scannetv2_enet.pth', help='path to enet model')
+else:
+    parser.add_argument('--model2d_path', required=False,
+                        default='/workspace/beachnet_train/bn_train_data/scannetv2_enet.pth', help='path to enet model')
 parser.add_argument('--use_proxy_loss', dest='use_proxy_loss', action='store_true')
 parser.add_argument('--num_points', default=4096, help='number of points in one sample')
 # 2d/3d 
@@ -124,7 +137,9 @@ parser.add_argument('--fy', type=float, default=577.870605, help='intrinsics')
 parser.add_argument('--mx', type=float, default=319.5, help='intrinsics')
 parser.add_argument('--my', type=float, default=239.5, help='intrinsics')
 
-parser.set_defaults(use_proxy_loss=False)
+
+#TODO: Sollen wir mal proxy loss hernehmen?
+parser.set_defaults(use_proxy_loss=True)
 opt = parser.parse_args()
 assert opt.model2d_type in ENET_TYPES
 print(opt)
@@ -179,9 +194,11 @@ num_points = opt.num_points
 # create enet and pointnet++ models
 num_classes = opt.num_classes
 model2d_fixed, model2d_trainable, model2d_classifier = create_enet_for_3d(ENET_TYPES[opt.model2d_type], opt.model2d_path, num_classes)
-model = Model2d3d(num_classes, num_images, input_channels, intrinsic, proj_image_dims, opt.depth_min, opt.depth_max, opt.accuracy, fusion=True, fuseAtPosition = 2, fuse_no_ft_pn=False, pointnet_pointnet = False)
+model = Model2d3d(num_classes, num_images, input_channels, intrinsic, proj_image_dims, opt.depth_min, opt.depth_max, opt.accuracy, fusion=True, fuseAtPosition = 4, fuse_no_ft_pn=False, pointnet_pointnet = False)
 projection = ProjectionHelper(intrinsic, opt.depth_min, opt.depth_max, proj_image_dims, opt.accuracy)
 # create loss
+
+#TODO: criterion weights sind konstant für alle Klassen. Sollen wir das fixen? (Wird nur hergenommen für ProxyLoss und irgendwelche Masken, die für uns aber so keine Bedeutung haben)
 criterion_weights = torch.ones(num_classes) 
 if opt.class_weight_file:
     criterion_weights = util.read_class_weights_from_file(opt.class_weight_file, num_classes, True)
@@ -196,7 +213,7 @@ criterion2d = torch.nn.CrossEntropyLoss(criterion_weights).cuda()
 
 # move to gpu
 model2d_fixed = model2d_fixed.cuda()
-model2d_fixed.eval()
+#model2d_fixed.eval()
 model2d_trainable = model2d_trainable.cuda()
 model2d_classifier = model2d_classifier.cuda()
 model = model.cuda()
@@ -217,7 +234,7 @@ model_fn = model_fn_decorator(nn.CrossEntropyLoss())
 #     is_wholescene = True
 # else:
 is_wholescene = False
-train_dataset = Indoor3DSemSeg(num_points, root=opt.input_folder_3d, train=True, overfit=False)
+train_dataset = Indoor3DSemSeg(num_points, root=opt.input_folder_3d, train=True)
 val_dataset = Indoor3DSemSeg(num_points, root=opt.input_folder_3d, train=False)
 if(visualize_test_scene):
     visualize_dataset = Indoor3DSemSeg(num_points, root=opt.input_folder_3d, train=False, overfit=False, visualize=True)
@@ -228,14 +245,23 @@ if(visualize_test_scene):
 #print(all_frames.shape)
 #print(np.unique(all_frames))
 
+if(train_on_Loros_Laptop):
+    val_dataloader = DataLoader(
+        val_dataset,
+        batch_size=opt.batch_size,
+        shuffle=True,
+        pin_memory=True,
+        num_workers=8
+    )
+else:
+    val_dataloader = DataLoader(
+        val_dataset,
+        batch_size=4,
+        shuffle=True,
+        pin_memory=True,
+        num_workers=8
+    )
 
-val_dataloader = DataLoader(
-    val_dataset,
-    batch_size=1,
-    shuffle=True,
-    pin_memory=True,
-    num_workers=8
-)
 train_dataloader = DataLoader(
     train_dataset,
     batch_size=opt.batch_size,
@@ -243,19 +269,14 @@ train_dataloader = DataLoader(
     num_workers=8,
     shuffle=True
 )
-if(visualize_test_scene):
-    visualize_dataloader = DataLoader(
-        visualize_dataset,
-        batch_size=opt.batch_size,
-        pin_memory=True,
-        num_workers=1,
-        shuffle=False
-    )
+
 
 dataloader = {
     "train": train_dataloader,
     "val": val_dataloader
 }
+
+#TODO: weight nehmen wir für nichts her, oder? also auch den solver nicht?
 weight = train_dataset.labelweights
 train_examples = len(train_dataset)
 val_examples = len(val_dataset)
@@ -303,12 +324,13 @@ def train(epoch, iter, log_file, train_dataloader, log_file_2d):
 
     ## Prepare everything for training
     train_loss = []
-    if opt.use_proxy_loss:
-        model2d_classifier.train()
     train_loss_2d = []
-    model.train()
     start = time.time()
     model2d_trainable.train()
+    model.train()
+    if opt.use_proxy_loss:
+        model2d_classifier.train()
+
     num_classes = opt.num_classes # idk why this is necessary, otherwise num_classes is referenced before assignment
 
     # initialize Tensors for depth, color, camera pose, labels for projection pass
@@ -320,8 +342,12 @@ def train(epoch, iter, log_file, train_dataloader, log_file_2d):
     tempTime = time.time()
 
     for t, data in enumerate(train_dataloader):
-        if(t % 10 == 0):
+        if(train_on_Loros_Laptop and t % 10 == 0):
             print(t, "/", len(train_dataloader))
+            print("10 Iterations took", round(time.time()-tempTime,2), "seconds.")
+            tempTime = time.time()
+        #if(t==10):
+        #    break
         ## Logs for current training iteration
         running_log = {
             # loss
@@ -352,6 +378,8 @@ def train(epoch, iter, log_file, train_dataloader, log_file_2d):
         maskindices = mask.nonzero().squeeze()
         if len(maskindices.shape) == 0:
             continue
+        if(maskindices.shape == torch.Size([0])):
+            continue
 
         ## Load images, camera poses and labels
         ## frames contains the numbers of the images that correspond to the respective scene chunk
@@ -379,6 +407,8 @@ def train(epoch, iter, log_file, train_dataloader, log_file_2d):
             mask2d = mask2d.nonzero().squeeze()
             if (len(mask2d.shape) == 0):
                 continue  # nothing to optimize for here
+            if(mask2d.shape == torch.Size([0])):
+                continue
         # 2d
         imageft_fixed = model2d_fixed(torch.autograd.Variable(color_images))
         imageft = model2d_trainable(imageft_fixed)
@@ -390,11 +420,11 @@ def train(epoch, iter, log_file, train_dataloader, log_file_2d):
         output = model(input3d, imageft, torch.autograd.Variable(proj_ind_3d), torch.autograd.Variable(proj_ind_2d))
         log[phase][epoch]["forward"].append(time.time() - start_forward)
         pred = output
-        num_classes = pred.size(2)
+        preds = torch.argmax(pred, 2)
+        running_log["acc"] = preds.eq(targets).sum().item() / preds.view(-1).size(0)
+        #num_classes = pred.size(2)
         loss = criterion(pred.contiguous().view(-1, num_classes), targets.view(-1).cuda(), weights.view(-1).cuda())
-        pred = torch.argmax(pred,2)
 
-        running_log["acc"] = pred.eq(targets).sum().item() / pred.view(-1).size(0)
         start = time.time()
 
         running_log["loss"] = loss
@@ -405,7 +435,7 @@ def train(epoch, iter, log_file, train_dataloader, log_file_2d):
         miou = []
         for i in range(21):
             # if i == 0: continue
-            pred_ids = torch.arange(pred.view(-1).size(0))[pred.view(-1) == i].tolist()
+            pred_ids = torch.arange(preds.view(-1).size(0))[preds.view(-1) == i].tolist()
             target_ids = torch.arange(targets.view(-1).size(0))[targets.view(-1) == i].tolist()
             if len(target_ids) == 0:
                 if (len(pred_ids) != 0):  ## added these 2 lines: Before, we did not incorporate classes that were predicted, but did not appear.
@@ -517,15 +547,6 @@ def test(epoch, iter, log_file, val_dataloader, log_file_2d):
     start = time.time()
     num_classes = opt.num_classes
 
-    # points, labels, frames = data_util.load_hdf5_data(val_file, num_classes)
-    # num_points = points.shape[1]
-
-    # frames = frames[:, :2+num_images]
-    # num_samples = points.shape[0]
-    # shuffle
-    # indices = torch.randperm(num_samples).long().split(batch_size)
-    # remove last mini-batch so that all the batches have equal size
-    # indices = indices[:-1]
 
     with torch.no_grad():
         depth_images = torch.cuda.FloatTensor(batch_size * num_images, proj_image_dims[1], proj_image_dims[0])
@@ -534,6 +555,8 @@ def test(epoch, iter, log_file, val_dataloader, log_file_2d):
         label_images = torch.cuda.LongTensor(batch_size * num_images, proj_image_dims[1], proj_image_dims[0])
 
         for t, data in enumerate(val_dataloader):
+            #if(train_on_Loros_Laptop and t == 10):
+            #    break
             running_log = {
                 # loss
                 "loss": 0,
@@ -541,13 +564,15 @@ def test(epoch, iter, log_file, val_dataloader, log_file_2d):
                 "acc": 0,
                 "miou": 0
             }
+            if(train_on_Loros_Laptop):
+                print(t, "/", len(val_dataloader))
             points, test, targets, frames, weights, fetch_time = data
             points, test, targets, weights = points.cuda(), test.cuda(), targets.cuda(), weights.cuda()
             log[phase][epoch]["fetch"].append(fetch_time)
 
-            num_points = points.shape[1]
+            num_points = opt.num_points
 
-            frames = frames[:, :2 + num_images]
+            #frames = frames[:, :2 + num_images]
             # num_samples = points.shape[0]
             # targets = labels[v].cuda()
             # valid targets
@@ -556,11 +581,26 @@ def test(epoch, iter, log_file, val_dataloader, log_file_2d):
                 if criterion_weights[k] == 0:
                     mask[mask.eq(k)] = 0
             maskindices = mask.nonzero().squeeze()
-            if len(maskindices.shape) == 0:
+
+            if(maskindices.shape == torch.Size([0])):
                 continue
             # get 2d data
             data_util.load_frames_multi(opt.data_path_2d, frames, depth_images, color_images, camera_poses, color_mean,
                                         color_std)
+
+
+            # compute projection mapping
+            points_projection = torch.repeat_interleave(points, num_images, dim=0)
+            proj_mapping = [projection.compute_projection(p, d, c, num_points) for p, d, c in
+                            zip(points_projection, depth_images, camera_poses)]
+            if None in proj_mapping:  # invalid sample
+                # print '(invalid sample)'
+                continue
+            proj_mapping = list(zip(*proj_mapping))
+            proj_ind_3d = torch.stack(proj_mapping[0])
+            proj_ind_2d = torch.stack(proj_mapping[1])
+            # 2d
+
             if opt.use_proxy_loss:
                 data_util.load_label_frames(opt.data_path_2d, frames, label_images, num_classes)
                 mask2d = label_images.view(-1).clone()
@@ -570,17 +610,9 @@ def test(epoch, iter, log_file, val_dataloader, log_file_2d):
                 mask2d = mask2d.nonzero().squeeze()
                 if (len(mask2d.shape) == 0):
                     continue  # nothing to optimize for here
+                if (mask2d.shape == torch.Size([0])):
+                    continue
 
-            # compute projection mapping
-            proj_mapping = [projection.compute_projection(p, d, c, num_points) for p, d, c in
-                            zip(points, depth_images, camera_poses)]
-            if None in proj_mapping:  # invalid sample
-                # print '(invalid sample)'
-                continue
-            proj_mapping = list(zip(*proj_mapping))
-            proj_ind_3d = torch.stack(proj_mapping[0])
-            proj_ind_2d = torch.stack(proj_mapping[1])
-            # 2d
             imageft_fixed = model2d_fixed(color_images)
             imageft = model2d_trainable(imageft_fixed)
             if opt.use_proxy_loss:
@@ -592,8 +624,9 @@ def test(epoch, iter, log_file, val_dataloader, log_file_2d):
             preds = torch.argmax(output, 2)
             running_log["acc"] = preds.eq(targets).sum().item() / preds.view(-1).size(0)
 
-            loss = criterion(output.view(-1, num_classes), targets.view(-1), weights.view(-1))
+            loss = criterion(output.contiguous().view(-1, num_classes), targets.view(-1).cuda(), weights.view(-1).cuda())
             running_log["loss"] = loss
+
 
             ##Computation of Miou
             miou = []
@@ -602,9 +635,8 @@ def test(epoch, iter, log_file, val_dataloader, log_file_2d):
                 pred_ids = torch.arange(preds.view(-1).size(0))[preds.view(-1) == i].tolist()
                 target_ids = torch.arange(targets.view(-1).size(0))[targets.view(-1) == i].tolist()
                 if len(target_ids) == 0:
-                    if (len(
-                            pred_ids) != 0):  ## added these 2 lines: Before, we did not incorporate classes that were predicted, but did not appear.
-                        miou.append(0)  ## Not sure if it makes sense to include this
+                    if (len(pred_ids) != 0):
+                        miou.append(0)
                     continue
                 num_correct = len(set(pred_ids).intersection(set(target_ids)))
                 num_union = len(set(pred_ids).union(set(target_ids)))
@@ -635,6 +667,7 @@ def test(epoch, iter, log_file, val_dataloader, log_file_2d):
             _, predictions = y.max(1)
             predictions = predictions.view(-1)
             k = targets.data.view(-1)
+
             confusion_val.add(torch.index_select(predictions, 0, maskindices), torch.index_select(k, 0, maskindices))
             if (epoch % 5 == 0):
                 model_root = os.path.join(CONF.OUTPUT_ROOT, stamp)
@@ -825,15 +858,32 @@ def compute_acc(coords, preds, targets, weights):
             total_seen_class_vox[l] += np.sum(uvlabel[:,0]==l)
             total_correct_class_vox[l] += np.sum((uvlabel[:,0]==l) & (uvlabel[:,1]==l))
 
-    pointacc = total_correct / float(total_seen)
-    voxacc = total_correct_vox / float(total_seen_vox)
-
+    if(float(total_seen) != 0):
+        pointacc = total_correct / float(total_seen)
+        voxacc = total_correct_vox / float(total_seen_vox)
+    else:
+        pointacc = 0
+        voxacc = 0
     labelweights = labelweights[1:].astype(np.float32)/np.sum(labelweights[1:].astype(np.float32))
     labelweights_vox = labelweights_vox[1:].astype(np.float32)/np.sum(labelweights_vox[1:].astype(np.float32))
     caliweights = np.array([0.388,0.357,0.038,0.033,0.017,0.02,0.016,0.025,0.002,0.002,0.002,0.007,0.006,0.022,0.004,0.0004,0.003,0.002,0.024,0.029])
     voxcaliacc = np.average(np.array(total_correct_class_vox[1:])/(np.array(total_seen_class_vox[1:],dtype=np.float)+1e-6),weights=caliweights)
 
-    return pointacc, voxacc, voxcaliacc
+    miou = []
+    for i in range(21):
+        # if i == 0: continue
+        pred_ids = torch.arange(torch.tensor(preds).view(-1).size(0))[torch.tensor(preds).view(-1) == i].tolist()
+        target_ids = torch.arange(torch.tensor(targets).view(-1).size(0))[torch.tensor(targets).view(-1) == i].tolist()
+        if len(target_ids) == 0:
+            if (len(pred_ids) != 0):  ## added these 2 lines: Before, we did not incorporate classes that were predicted, but did not appear.
+                miou.append(0)  ## Not sure if it makes sense to include this
+            continue
+        num_correct = len(set(pred_ids).intersection(set(target_ids)))
+        num_union = len(set(pred_ids).union(set(target_ids)))
+        miou.append(num_correct / (num_union + 1e-8))
+
+    miou_out = np.mean(miou)
+    return pointacc, voxacc, voxcaliacc, miou_out
 
 def eval_one_batch(args, data):
     # unpack
@@ -850,6 +900,7 @@ def eval_one_batch(args, data):
     maskindices = mask.nonzero().squeeze()
     if len(maskindices.shape) == 0:
         print("Skipped one")
+        return None, None, None, None
     # get 2d data
 
     depth_images = torch.cuda.FloatTensor(batch_size * num_images, proj_image_dims[1], proj_image_dims[0])
@@ -868,22 +919,21 @@ def eval_one_batch(args, data):
         mask2d = mask2d.nonzero().squeeze()
         if (len(mask2d.shape) == 0):
             print("Skipped one")
+            return None, None, None, None
 
     # compute projection mapping
     proj_mapping = [projection.compute_projection(p, d, c, num_points) for p, d, c in
                     zip(points, depth_images, camera_poses)]
     if None in proj_mapping:  # invalid sample
         print('(invalid sample)')
-
+        return None, None, None, None
     proj_mapping = list(zip(*proj_mapping))
     proj_ind_3d = torch.stack(proj_mapping[0])
     proj_ind_2d = torch.stack(proj_mapping[1])
     # 2d
     imageft_fixed = model2d_fixed(color_images)
     imageft = model2d_trainable(imageft_fixed)
-    if opt.use_proxy_loss:
-        ft2d = model2d_classifier(imageft)
-        ft2d = ft2d.permute(0, 2, 3, 1).contiguous()
+
     # 2d/3d
     input3d = points.cuda()
     output = model(input3d, imageft, proj_ind_3d, proj_ind_2d)
@@ -896,9 +946,9 @@ def eval_one_batch(args, data):
     preds = preds.squeeze(0).cpu().numpy()       # (CK, N, C)
     targets = targets.squeeze(0).cpu().numpy()   # (CK, N, C)
     weights = weights.squeeze(0).cpu().numpy()   # (CK, N, C)
-    pointacc, voxacc, voxcaliacc = compute_acc(coords, preds, targets, weights)
+    pointacc, voxacc, voxcaliacc, miou = compute_acc(coords, preds, targets, weights)
 
-    return pointacc, voxacc, voxcaliacc
+    return pointacc, voxacc, voxcaliacc, miou
 
 
 def eval_wholescene(args, dataloader):
@@ -906,19 +956,22 @@ def eval_wholescene(args, dataloader):
     pointacc_list = []
     voxacc_list = []
     voxcaliacc_list = []
+    miou_list = []
 
     # iter
     for t,data in enumerate(dataloader):
         # feed
         print(t, "/", len(dataloader))
-        pointacc, voxacc, voxcaliacc = eval_one_batch(args, data)
+        pointacc, voxacc, voxcaliacc, miou = eval_one_batch(args, data)
 
         # dump
-        pointacc_list.append(pointacc)
-        voxacc_list.append(voxacc)
-        voxcaliacc_list.append(voxcaliacc)
+        if(pointacc is not None):
+            pointacc_list.append(pointacc)
+            voxacc_list.append(voxacc)
+            voxcaliacc_list.append(voxcaliacc)
+            miou_list.append(miou)
 
-    return pointacc_list, voxacc_list, voxcaliacc_list
+    return pointacc_list, voxacc_list, voxcaliacc_list, miou_list
 
 
 def evaluate(args):
@@ -927,8 +980,7 @@ def evaluate(args):
     #scene_list = get_scene_list("python/Mesh2Loc/data/scannetv2_val.txt")
 
 
-    test_dataset = Indoor3DSemSeg(num_points, root=opt.input_folder_3d, train=False, overfit=False,
-                                           visualize=False, test=True)
+    test_dataset = Indoor3DSemSeg(num_points, root=opt.input_folder_3d, train=False, test=True)
     test_dataloader = DataLoader(
         test_dataset,
         batch_size=1,
@@ -956,16 +1008,18 @@ def evaluate(args):
 
     # eval
     print("evaluating...")
-    pointacc_list, voxacc_list, voxcaliacc_list = eval_wholescene(args, test_dataloader)
+    pointacc_list, voxacc_list, voxcaliacc_list, miou_list = eval_wholescene(args, test_dataloader)
     avg_pointacc = np.mean(pointacc_list)
     avg_voxacc = np.mean(voxacc_list)
     avg_voxcaliacc = np.mean(voxcaliacc_list)
+    avg_miou = np.mean(miou_list)
 
     # report
     print()
     print("Point accuracy: {}".format(avg_pointacc))
     print("Voxel-based point accuracy: {}".format(avg_voxacc))
     print("Calibrated point accuracy: {}".format(avg_voxcaliacc))
+    print("Calibrated point miou: {}".format(avg_miou))
 
 
 
@@ -973,21 +1027,21 @@ def evaluate(args):
 
 def main():
 
-    ## COmment the following is not evaluating:
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--folder', type=str, help='output folder containing the best model from training',
-                        required=False)
-    parser.add_argument('--batch_size', type=int, help='size of the batch/chunk', default=8)
-    parser.add_argument('--gpu', type=str, help='gpu', default='0')
-    args = parser.parse_args()
-    args.folder = "/home/lorenzlamm/Dokumente/DavesPointnetClone/Pointnet2.ScanNet"
-    # setting
-    os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
-    os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
-
-    evaluate(args)
-    return
-    #### Stop commenting
+    # # COmment the following is not evaluating:
+    # parser = argparse.ArgumentParser()
+    # parser.add_argument('--folder', type=str, help='output folder containing the best model from training',
+    #                     required=False)
+    # parser.add_argument('--batch_size', type=int, help='size of the batch/chunk', default=8)
+    # parser.add_argument('--gpu', type=str, help='gpu', default='0')
+    # args = parser.parse_args()
+    # args.folder = "/home/lorenzlamm/Dokumente/DavesPointnetClone/Pointnet2.ScanNet"
+    # # setting
+    # os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
+    # os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
+    #
+    # evaluate(args)
+    # return
+    # ### Stop commenting
 
 
     stamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
@@ -1035,10 +1089,10 @@ def main():
         #for k in range(len(train_dataloader)):
         k = 1234
         print('Epoch: {}\tFile: {}/{}\t{}'.format(epoch, k, len(train_dataloader), train_dataloader))
-        what, gt = test_for_visual(epoch, iter, log_file, visualize_dataloader, log_file_2d)
-        print(what.shape, "<-----")
-        np.savetxt("/home/lorenzlamm/Dokumente/poster_pres/scene0600_00.txt", what, delimiter=',')
-        np.savetxt("/home/lorenzlamm/Dokumente/poster_pres/scene0600_00_gt.txt", gt, delimiter=',')
+        # what, gt = test_for_visual(epoch, iter, log_file, visualize_dataloader, log_file_2d)
+        # print(what.shape, "<-----")
+        # np.savetxt("/home/lorenzlamm/Dokumente/poster_pres/scene0600_00.txt", what, delimiter=',')
+        # np.savetxt("/home/lorenzlamm/Dokumente/poster_pres/scene0600_00_gt.txt", gt, delimiter=',')
         loss, iter, loss2d = train(epoch, iter, log_file, train_dataloader, log_file_2d)
         train_loss.extend(loss)
         if loss2d:
@@ -1058,7 +1112,7 @@ def main():
         if has_val:
             evaluate_confusion(confusion_val, val_loss, epoch, iter, -1, 'Test', log_file_val)
             if opt.use_proxy_loss:
-                evaluate_confusion(confusion2d_val, val_loss, epoch, iter, -1, 'Test2d', log_file_2d_val)
+                evaluate_confusion(confusion2d_val, val2d_loss, epoch, iter, -1, 'Test2d', log_file_2d_val)
         torch.save(model.state_dict(), os.path.join(opt.output, 'model-epoch-%s.pth' % epoch))
         torch.save(model2d_trainable.state_dict(), os.path.join(opt.output, 'model2d-epoch-%s.pth' % epoch))
         if opt.use_proxy_loss:
@@ -1138,6 +1192,8 @@ def dump_log(epoch_id):
 
 def epoch_report(epoch_id):
     print("epoch [{}/{}] done...".format(epoch_id+1, 20))
+    for loss in log["val"][epoch_id]["loss"]:
+        print(loss)
     epoch_report = epoch_report_template.format(
         train_loss=round(np.mean([loss for loss in log["train"][epoch_id]["loss"]]), 5),
         train_acc=round(np.mean([acc for acc in log["train"][epoch_id]["acc"]]), 5),

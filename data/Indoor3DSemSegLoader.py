@@ -24,19 +24,17 @@ def _get_data_files(list_filename):
 
 def _load_data_file(name):
     f = h5py.File(name)
-    data = f["points"][:]
-    label = f["labels"][:]
-    print(f["corresponding_images"])
-    frames = f["corresponding_images"][:]
+    data = f["points"]
+    label = f["labels"]
+    frames = f["corresponding_images"]
     return data, label, frames
 
 
 class Indoor3DSemSeg(data.Dataset):
-    def __init__(self, num_points, root, train=True, download=True, data_precent=1.0, overfit=False, visualize=False, test=False):
+    def __init__(self, num_points, root, train=True, download=True, npoints=4096, data_precent=1.0, test=False):
         super().__init__()
         BASE_DIR = root
-        self.overfit = overfit
-        self.visualize = visualize
+        self.npoints = npoints
         self.data_precent = data_precent
         self.folder = "bn_train_data"
         self.data_dir = os.path.join(BASE_DIR, self.folder)
@@ -61,8 +59,6 @@ class Indoor3DSemSeg(data.Dataset):
         self.test = test
         if(self.test):
             self.train=False
-            self.visualize=False
-            self.overfit=False
 
         if(self.train):
             with open(os.path.join(root, "all_files_train.txt"), 'w+') as f:
@@ -70,6 +66,7 @@ class Indoor3DSemSeg(data.Dataset):
                 for entry in list:
                     if(entry.startswith("train")):
                         f.writelines(os.path.join(root, entry + "\n"))
+                        break
             all_files = _get_data_files(os.path.join(root, "all_files_train.txt"))
         elif(self.test):
             with open(os.path.join(root, "all_files_test.txt"), 'w+') as f:
@@ -77,128 +74,77 @@ class Indoor3DSemSeg(data.Dataset):
                 for entry in list:
                     if(entry.startswith("test")):
                         f.writelines(os.path.join(root, entry + "\n"))
+                        break
             all_files = _get_data_files(os.path.join(root, "all_files_test.txt"))
-        elif(not self.visualize):
+        else:
             with open(os.path.join(root, "all_files_val.txt"), 'w+') as f:
                 list = os.listdir(root)
                 for entry in list:
                     if(entry.startswith("val")):
                         f.writelines(os.path.join(root,entry + "\n"))
+                        break
             all_files = _get_data_files(os.path.join(root, "all_files_val.txt"))
-        else:
-            with open(os.path.join(root, "all_files_vis.txt"), 'w+') as f:
-                list = os.listdir(root)
-                for entry in list:
-                    if(entry.startswith("scene")):
-                        f.writelines(os.path.join(root,entry + "\n"))
-            all_files = _get_data_files(os.path.join(root, "all_files_vis.txt"))
 
 
         data_batchlist, label_batchlist, frames_batchlist = [], [], []
+        count = 0
         for f in all_files:
-            data, label, frames = _load_data_file(f)
-            if(len(data.shape) == 2):
-                data = np.expand_dims(data, axis=0)
-                label = np.expand_dims(label, axis=0)
-                frames = np.expand_dims(frames, axis=0)
-            #if(self.visualize):
-            if(self.overfit):
-                for i in range(100):
-                    data_batchlist.append(data[:1])
-                    label_batchlist.append(label[:1])
-                    frames_batchlist.append(frames[:1])
-                break
-            else:
-                data_batchlist.append(data)
-                label_batchlist.append(label)
-                frames_batchlist.append(frames)
+            count += 1
+            print(count, "/", len(all_files))
+            tempData, tempLabel, tempFrames = _load_data_file(f)
+            for k, v in tempData.items():
+                data_batchlist.append(v[:])
+            for k, v in tempLabel.items():
+                label_batchlist.append(v[:])
+            for k, v in tempFrames.items():
+                frames_batchlist.append(v[:])
 
 
+        label_counts = np.ones(21)
+        count = 0
+        count_total_points = 0
+        print("Computing Labelweights")
+        for labels_it in label_batchlist:
+            count+=1
+            print("counted", count, "/", len(label_batchlist), "point clouds")
+            count_total_points += labels_it.shape[1]
+            for i in range(21):
+                label_counts[i] += np.sum(labels_it[0] == i)
+        print(label_counts)
 
-        data_batches = np.concatenate(data_batchlist, 0)
-        labels_batches = np.concatenate(label_batchlist, 0)
-        frames_batches = np.concatenate(frames_batchlist, 0)
-        if(self.visualize):
-            print(frames_batches)
-        #print(frames_batches.shape)
-        #print(np.unique(frames_batches[:,0]))
+#        labels_unique = np.unique(labels_batches)
+ #       labels_unique_count = np.stack([(labels_batches == labels_u).sum() for labels_u in labels_unique])
 
-        print(data_batches.shape)
-        labels_unique = np.unique(labels_batches)
-        labels_unique_count = np.stack([(labels_batches == labels_u).sum() for labels_u in labels_unique])
-
-        labelSum = labels_unique_count.sum()
-        self.labelweights = np.zeros(21)
-        for c in range(21):
-            if (c in labels_unique):
-                count = 0
-                for k in range(21):
-                    if (c == k):
-                        self.labelweights[count] = labels_unique_count[count] / labelSum
-                    if (k in labels_unique):
-                        count += 1
-            else:
-                self.labelweights[c] = 1
-        print("Label Weights for split: ", self.train)
+        self.labelweights = label_counts / count_total_points
         print(self.labelweights)
-        # self.labelweights = labels_unique_count / (labels_unique_count.sum())
         for c in range(21):
             if (c == 0):
                 self.labelweights[c] = 1.0
             else:
-                if (c in labels_unique):
-                    self.labelweights[c] = 1 / np.log(1.2 + self.labelweights[c])
-                else:
-                    self.labelweights[c] = 1.0
+                self.labelweights[c] = 1 / np.log(1.2 + self.labelweights[c])
 
+        self.points = data_batchlist
+        self.labels = label_batchlist
+        self.frames = frames_batchlist
 
-
-
-
-        test_area = "Area_5"
-        train_idxs, test_idxs = [], []
-        
-        for i in range(data_batches.shape[0]):
-            if(self.train):
-                train_idxs.append(i)
-            else:
-                test_idxs.append(i)
-        
-        #for i, room_name in enumerate(room_filelist):
-        #    if test_area in room_name:
-        #        test_idxs.append(i)
-        #    else:
-        #        train_idxs.append(i)
-
-        if self.train:
-            self.points = data_batches[train_idxs, ...]
-            self.labels = labels_batches[train_idxs, ...]
-            self.frames = frames_batches[train_idxs, ...]
-        else:
-            self.points = data_batches[test_idxs, ...]
-            self.labels = labels_batches[test_idxs, ...]
-            self.frames = frames_batches[test_idxs, ...]
 
     def __getitem__(self, idx):
         start = time.time()
-        pt_idxs = np.arange(0, self.num_points)
-        np.random.shuffle(pt_idxs)
-        current_points = torch.from_numpy(self.points[idx, pt_idxs].copy()).type(
+        current_frames = torch.from_numpy(self.frames[idx][0])
+        choice = np.random.choice(self.labels[idx][0].shape[0]-1, self.npoints, replace=True)
+        current_points = torch.from_numpy(self.points[idx][0, choice].copy()).type(
             torch.FloatTensor
         )
-        current_labels = torch.from_numpy(self.labels[idx, pt_idxs].copy()).type(
+        current_labels = torch.from_numpy(self.labels[idx][0, choice].copy()).type(
             torch.LongTensor
         )
-        current_frames = torch.from_numpy(self.frames[idx])
-        fetch_time = time.time() - start
-
-
         sample_weights = self.labelweights[current_labels]
         test = np.zeros((4096,0))
+        fetch_time = time.time() - start
         return current_points, test, current_labels, current_frames, sample_weights, fetch_time
 
     def __len__(self):
-        return int(self.points.shape[0] * self.data_precent)
+        return int(len(self.points) * self.data_precent)
 
     def set_num_points(self, pts):
         self.num_points = pts

@@ -220,6 +220,13 @@ class Model2d3d(nn.Module):
                             bn=bn
                         )
                     )
+                elif(self.fuse_at_position == 4 and k == FP_MLPS.__len__()-1):
+                    self.FP_modules.append(
+                        PointnetFPModule(
+                            mlp=[pre_channel*2 + skip_channel_list[k]] + FP_MLPS[k],
+                            bn=bn
+                        )
+                    )
                 else:
                     self.FP_modules.append(
                         PointnetFPModule(
@@ -463,7 +470,7 @@ class Model2d3d(nn.Module):
             concatenated_cloud = torch.cat([point_cloud, image_features], 2)
 
             # split point cloud into coordinates and features
-            xyz, features = self._break_up_pc(point_cloud)
+            xyz, features = self._break_up_pc(concatenated_cloud)
             l_xyz, l_features = [xyz], [features]  # [features]
             # set abstraction
             for i in range(len(self.SA_modules)):
