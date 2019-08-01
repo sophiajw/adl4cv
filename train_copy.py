@@ -9,18 +9,15 @@ import numpy as np
 from datetime import datetime
 from torch.utils.data import DataLoader
 
-import util
-import data_util
+from utils import util
+from data import data_util
 from model import Model2d3d
 from enet import create_enet_for_3d
-from projection import ProjectionHelper
+from utils.projection import ProjectionHelper
 from data.Indoor3DSemSegLoader import Indoor3DSemSeg
  
 from tensorboardX import SummaryWriter
 sys.path.append(".")
-from lib.solver import Solver
-from lib.loss import WeightedCrossEntropyLoss
-from lib.config import CONF
 
 log = {phase: {} for phase in ["train", "val"]}
 ENET_TYPES = {'scannet': (41, [0.496342, 0.466664, 0.440796], [0.277856, 0.28623, 0.291129])}  #classes, color mean/std 
@@ -93,7 +90,7 @@ parser = argparse.ArgumentParser()
 #parser.add_argument('--input_folder_3d', required=False, default='/workspace/beachnet_train/bn_train_data')
 parser.add_argument('--input_folder_3d', required=False,
                     default='/media/lorenzlamm/My Book/Final_Scannet_Data/final_containers')
-
+parser.add_argument('--root_directory', default='/workspace/beachnet_train/adl4cv', help='directory of train.py')
 parser.add_argument('--val_data_list', default='', help='path to file list of h5 val data')
 parser.add_argument('--output', default='./logs_evaluation', help='folder to output model checkpoints')
 #parser.add_argument('--data_path_2d', required=False, default='/workspace/beachnet_train/bn_train_data',
@@ -153,7 +150,7 @@ num_points = opt.num_points
 # Start initialization
 print("initializing...")
 stamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-root = os.path.join(CONF.OUTPUT_ROOT, stamp)
+root = os.path.join(opt.root_directory, stamp)
 os.makedirs(root, exist_ok=True)
 
 
@@ -164,7 +161,7 @@ model = Model2d3d(num_classes, num_images, input_channels, intrinsic, proj_image
 projection = ProjectionHelper(intrinsic, opt.depth_min, opt.depth_max, proj_image_dims, opt.accuracy)
 
 # create loss
-criterion = WeightedCrossEntropyLoss()
+criterion = util.WeightedCrossEntropyLoss()
 criterion2d = torch.nn.CrossEntropyLoss().cuda()
 
 # move to gpu
@@ -564,7 +561,7 @@ def test_for_visual(vis_dataloader):
 
 def main():
     stamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-    tb_path = os.path.join(CONF.OUTPUT_ROOT, stamp, "tensorboard")
+    tb_path = os.path.join(opt.root_directory, stamp, "tensorboard")
     global log_writer
     log_writer = SummaryWriter(tb_path)
     global global_iter_id

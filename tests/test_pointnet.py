@@ -5,21 +5,11 @@ from __future__ import (
     print_function,
     unicode_literals,
 )
-import torch.optim as optim
-import torch.optim.lr_scheduler as lr_sched
-import torch.nn as nn
 from torch.utils.data import DataLoader
-import etw_pytorch_utils as pt_utils
-import pprint
-import os.path as osp
-import os
 import argparse
 import torch
-import data_util
+from data import data_util
 
-
-from pointnet2.models import Pointnet2SemMSG as Pointnet
-from pointnet2.models.pointnet2_msg_sem import model_fn_decorator
 from pointnet2.data import Indoor3DSemSeg
 
 parser = argparse.ArgumentParser(description="Arg parser")

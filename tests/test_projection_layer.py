@@ -5,12 +5,10 @@ from scipy.ndimage import imread
 
 import numpy as np
 import torch
-import h5py
 
-
-from data_util import resize_crop_image
+from data.data_util import resize_crop_image
 from projection_cpu import ProjectionHelper
-import util
+from utils import util
 
 # params
 parser = argparse.ArgumentParser()
@@ -33,14 +31,7 @@ parser.add_argument('--depth_max', type=float, default=4.0, help='max depth (in 
 opt = parser.parse_args()
 print(opt)
 
-proj_image_dims = [240, 320]
-
-def _load_data_file(name):
-    f = h5py.File(name)
-    data = f["points"][:]
-    label = f["labels"][:]
-    frames = f["corresponding_images"][:]
-    return data, label, frames
+proj_image_dims = [41, 32]
 
 # initialize projection class
 # get intrinsic
@@ -51,18 +42,14 @@ projection = ProjectionHelper(intrinsic, opt.depth_min, opt.depth_max, proj_imag
 
 ### compute_projection
 
-points, label, frames = _load_data_file('/Users/sophia/Documents/Studium/Mathematik/Master/AdvancedDeepLearning4ComputerVision/data/sampleBeachData/chunksWithCorrespondences/train0000_00_42.hdf5')
-points = torch.from_numpy(points)
-points = points.type(torch.DoubleTensor)
-label = torch.from_numpy(label).double()
 ## get depth_image
 batch_size = 1
 num_images = 1
 depth_images = torch.FloatTensor(batch_size * num_images, proj_image_dims[1], proj_image_dims[0])
 # depth_images = torch.cuda.FloatTensor(batch_size * num_images, proj_image_dims[1], proj_image_dims[0])
 # load_frames_multi
-scan_name = 'scene0000_00'
-frame_id = frames[3]
+scan_name = 'scene0600_00'
+frame_id = 140
 depth_file = os.path.join(opt.data_path_2d, scan_name, 'depth', str(frame_id) + '.png')
 depth_image_dims = [depth_images.shape[2], depth_images.shape[1]]
 # load_depth_label_pose
@@ -72,16 +59,6 @@ depth_image = resize_crop_image(depth_image, depth_image_dims) # resize to proj_
 depth_image = depth_image.astype(np.float32) / 1000.0
 depth_image = torch.from_numpy(depth_image)
 
-# color image
-color_images = torch.FloatTensor(batch_size * num_images, proj_image_dims[1], proj_image_dims[0])
-color_file = os.path.join(opt.data_path_2d, scan_name, 'color', str(frame_id) + '.jpg')
-color_image = imread(color_file)
-print(color_image.shape)
-color_image = torch.from_numpy(color_image)
-color_image = color_image.type(torch.DoubleTensor)
-
-
-
 ## get camera_pose
 pose_file = os.path.join(opt.data_path_2d, scan_name, 'pose', str(frame_id) + '.txt')
 lines = open(pose_file).read().splitlines()
@@ -90,19 +67,20 @@ lines = [[x[0],x[1],x[2],x[3]] for x in (x.split(" ") for x in lines)]
 camera_pose = torch.from_numpy(np.asarray(lines).astype(np.float32))
 
 # load point cloud
-np.savetxt('scenechunk_0000_00_42_labels.txt', torch.cat((points, label.unsqueeze(1)), dim=1), delimiter=',')
+input = torch.DoubleTensor(np.genfromtxt('/Users/sophia/Documents/Studium/Mathematik/Master/AdvancedDeepLearning4ComputerVision/data/scene0600_00.txt', delimiter=','))
+points = input[:, :3]
+points = points.type(torch.DoubleTensor)
+labels = input[:, 3]
+#np.savetxt('scene0000_00_labels.txt', torch.cat((points, labels.unsqueeze(1)), dim=1), delimiter=',')
 num_points = points.shape[0]
-#
+
 three_dim, two_dim = projection.compute_projection(points, depth_image, camera_pose, num_points)
-#
-print(points[three_dim[1:(three_dim[0]+1)]].type())
-print(color_image.view((76800, 3)).type())
-points_proj = torch.cat((points[three_dim[1:(three_dim[0]+1)]], color_image.view(76800, 3)[two_dim[1:(two_dim[0]+1)]]), dim=1)
-print(points_proj.shape)
-np.savetxt('test_projection_chunk_0000_00_42.txt', points_proj, delimiter=',')
-#
-#corner_coords = projection.compute_frustum_corners(camera_pose)
-#np.savetxt('corner_coords_840.txt', corner_coords, delimiter=',')
+
+points_proj = torch.cat((points[three_dim[1:(three_dim[0]+1)]], labels[three_dim[1:(three_dim[0]+1)]].unsqueeze(1)), dim=1)
+np.savetxt('scene_0600_00_140.txt', points_proj, delimiter=',')
+
+# corner_coords = projection.compute_frustum_corners(camera_pose)
+# np.savetxt('scene0600_00_corner_coords_140.txt', corner_coords, delimiter=',')
 # normals = projection.compute_frustum_normals(corner_coords)
 # new_pt = projection.point_in_frustum(corner_coords, normals, corner_coords[4][:3].view(-1))
 

@@ -2,9 +2,9 @@
 import torch
 import torch.nn as nn
 
-from projection import Projection
-from pointnet2_modules import PointnetFPModule, PointnetSAModuleMSG
-import pytorch_utils as pt_utils
+from utils.projection import Projection
+from utils.pointnet2_modules import PointnetFPModule, PointnetSAModuleMSG
+from utils import pytorch_utils as pt_utils
 
 # parameters needed for initialization of PointNet++ layers
 NPOINTS = [1024, 256, 64, 16]

@@ -1,12 +1,10 @@
 import os
 import numpy as np
 import torch
-import util
+from utils import util
 import argparse
-from projection import ProjectionHelper
+from utils.projection import ProjectionHelper
 import h5py
-import time
-
 
 """
 The following parameters were adapted from 3DMV and are needed for the computation of camera intrinsics

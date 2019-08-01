@@ -5,10 +5,10 @@ import os
 import argparse
 from scipy import misc
 
-import util
-from data_util import resize_crop_image
+from utils import util
+from data.data_util import resize_crop_image
 from model import Model2d3d
-from projection import ProjectionHelper
+from utils.projection import ProjectionHelper
 
 # initialize model and Projection Helper
 proj_image_dims = [41, 32]

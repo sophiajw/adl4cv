@@ -1,16 +1,13 @@
 import argparse
-import os, sys, inspect, time
-import random
+import os, sys
 import torch
-import torchnet as tnt
-import torch.nn.functional as F
 import numpy as np
 
-import util
-import data_util
+from utils import util
+from data import data_util
 from model import Model2d3d
 from enet import create_enet_for_3d
-from projection import ProjectionHelper
+from utils.projection import ProjectionHelper
 
 ENET_TYPES = {'scannet': (41, [0.496342, 0.466664, 0.440796], [0.277856, 0.28623, 0.291129])}  #classes, color mean/std 
 
