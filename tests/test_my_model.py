@@ -7,7 +7,7 @@ from scipy import misc
 
 from utils import util
 from data.data_util import resize_crop_image
-from model import Model2d3d
+from model import BeachNet
 from utils.projection import ProjectionHelper
 
 # initialize model and Projection Helper
@@ -16,7 +16,7 @@ intrinsic = util.make_intrinsic(577.870605, 577.870605, 319.5, 239.5) # affine t
 intrinsic = util.adjust_intrinsic(intrinsic, [640, 480], proj_image_dims)
 
 projection = ProjectionHelper(intrinsic, 0.4, 4.0, proj_image_dims, 0.05)
-model = Model2d3d(42, 3, 128, intrinsic, proj_image_dims, 0.4, 4.0, 0.05)
+model = BeachNet(42, 3, 128, intrinsic, proj_image_dims, 0.4, 4.0, 0.05)
 model = model.cuda()
 
 # get point cloud

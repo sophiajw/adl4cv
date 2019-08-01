@@ -37,7 +37,7 @@ def _load_data_file(name):
     return data, label, frames
 
 
-class Indoor3DSemSeg(data.Dataset):
+class DataLoader(data.Dataset):
     def __init__(self, num_points, root, train=True, test=False, visualize = False, vis_scene = "0000_00"):
         """
         Initialization of Dataset

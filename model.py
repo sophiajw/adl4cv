@@ -17,10 +17,10 @@ CLS_FC = [128]
 DP_RATIO = 0.5
 
 
-class Model2d3d(nn.Module):
+class BeachNet(nn.Module):
 
     def __init__(self, num_classes, num_images, input_channels, intrinsic, image_dims, depth_min, depth_max, accuracy,
-                 fusion = True, fuseAtPosition=2, fuse_no_ft_pn = False, pointnet_pointnet = False):
+                 fusion=True, fuse_at_position=2, fuse_no_ft_pn=False, pointnet_pointnet=False):
         """
         Initialization of our model with different fusing methods for feature and geometry point clouds in PointNet++.
         Default settings initialize our best model, i.e. fusion after two set abstraction layers.
@@ -34,14 +34,14 @@ class Model2d3d(nn.Module):
         :param depth_max: (float) max depth [m] of camera
         :param accuracy: (float) accuracy for projection layer
         :param fusion: (boolean) Fuse in set abstraction layers of PointNet++?
-        :param fuseAtPosition: (1, 2 or 4) Fuse after fuseAtPosition set abstraction layers
+        :param fuse_at_position: (1, 2 or 4) Fuse after fuse_at_position set abstraction layers
         :param fuse_no_ft_pn: (boolean) Process only geomtry point cloud with PointNet++?
         :param pointnet_pointnet: (boolean) Apply PointNet++ in all steps
         """
-        super(Model2d3d, self).__init__()
+        super(BeachNet, self).__init__()
         self.pointnet_pointnet = pointnet_pointnet
         self.fusion = fusion
-        self.fuse_at_position = fuseAtPosition
+        self.fuse_at_position = fuse_at_position
         self.fuse_no_ft_pn = fuse_no_ft_pn
         if(self.fuse_no_ft_pn):
             self.fusion = False
@@ -90,7 +90,7 @@ class Model2d3d(nn.Module):
             if self.pointnet_pointnet:
                 channel_out_concat = 0
             if self.fusion:
-                if k == fuseAtPosition:
+                if k == self.fuse_at_position:
                     channel_in += channel_in_feat
 
             for idx in range(mlps.__len__()):

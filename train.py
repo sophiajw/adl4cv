@@ -11,10 +11,10 @@ from torch.utils.data import DataLoader
 
 from utils import util
 from data import data_util
-from model import Model2d3d
+from model import BeachNet
 from enet import create_enet_for_3d
 from utils.projection import ProjectionHelper
-from data.Indoor3DSemSegLoader import Indoor3DSemSeg
+from data.load_data import DataLoader
  
 from tensorboardX import SummaryWriter
 sys.path.append(".")
@@ -157,7 +157,8 @@ os.makedirs(root, exist_ok=True)
 # create enet and pointnet++ models
 num_classes = opt.num_classes
 model2d_fixed, model2d_trainable, model2d_classifier = create_enet_for_3d(ENET_TYPES[opt.model2d_type], opt.model2d_path, num_classes)
-model = Model2d3d(num_classes, num_images, input_channels, intrinsic, proj_image_dims, opt.depth_min, opt.depth_max, opt.accuracy, fusion=True, fuseAtPosition = 2, fuse_no_ft_pn=False, pointnet_pointnet = False)
+model = BeachNet(num_classes, num_images, input_channels, intrinsic, proj_image_dims, opt.depth_min, opt.depth_max,
+                 opt.accuracy, fusion=True, fuseAtPosition = 2, fuse_no_ft_pn=False, pointnet_pointnet=False)
 projection = ProjectionHelper(intrinsic, opt.depth_min, opt.depth_max, proj_image_dims, opt.accuracy)
 
 # create loss
@@ -179,8 +180,8 @@ if opt.use_proxy_loss:
 
 
 
-train_dataset = Indoor3DSemSeg(num_points, root=opt.input_folder_3d, train=True)
-val_dataset = Indoor3DSemSeg(num_points, root=opt.input_folder_3d, train=False)
+train_dataset = DataLoader(num_points, root=opt.input_folder_3d, train=True)
+val_dataset = DataLoader(num_points, root=opt.input_folder_3d, train=False)
 train_dataloader = DataLoader(
     train_dataset,
     batch_size=opt.batch_size,
@@ -583,7 +584,7 @@ def main():
         # Visualize a test scene
         if(visual_flag):
             scene_nr = "0568_00"
-            vis_dataset = Indoor3DSemSeg(num_points, root=opt.input_folder_3d, train=False, test=False, visualize=True, vis_scene = scene_nr)
+            vis_dataset = DataLoader(num_points, root=opt.input_folder_3d, train=False, test=False, visualize=True, vis_scene = scene_nr)
             vis_dataloader = DataLoader(
                 vis_dataset,
                 batch_size=1,
@@ -597,7 +598,7 @@ def main():
 
         # if we want to evaluate our model, we feed in the test data
         if(eval_flag):
-            test_dataset = Indoor3DSemSeg(num_points, root=opt.input_folder_3d, train=False, test=True)
+            test_dataset = DataLoader(num_points, root=opt.input_folder_3d, train=False, test=True)
             test_dataloader = DataLoader(
                 test_dataset,
                 batch_size=1,
