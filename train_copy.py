@@ -123,10 +123,10 @@ parser.set_defaults(use_proxy_loss=True)
 opt = parser.parse_args()
 assert opt.model2d_type in ENET_TYPES
 
-# specify gpu
+## specify gpu
 os.environ['CUDA_VISIBLE_DEVICES']=str(opt.gpu)
 
-# create camera intrinsics
+## create camera intrinsics
 input_image_dims = [328, 256]
 proj_image_dims = [41, 32]
 intrinsic = util.make_intrinsic(opt.fx, opt.fy, opt.mx, opt.my)
@@ -168,9 +168,6 @@ optimizer = torch.optim.Adam(model.parameters(), lr=opt.lr_pointnet, weight_deca
 optimizer2d = torch.optim.SGD(model2d_trainable.parameters(), lr=opt.lr, momentum=opt.momentum, weight_decay=opt.weight_decay)
 if opt.use_proxy_loss:
     optimizer2dc = torch.optim.SGD(model2d_classifier.parameters(), lr=opt.lr, momentum=opt.momentum, weight_decay=opt.weight_decay)
-
-# function to compute accuracy and miou in pointnet++
-model_fn = model_fn_decorator(nn.CrossEntropyLoss())
 
 
 train_dataset = Indoor3DSemSeg(num_points, root=opt.input_folder_3d, train=True)
@@ -657,8 +654,8 @@ def compute_acc(coords, preds, targets, weights):
         pred_ids = torch.arange(torch.tensor(preds).view(-1).size(0))[torch.tensor(preds).view(-1) == i].tolist()
         target_ids = torch.arange(torch.tensor(targets).view(-1).size(0))[torch.tensor(targets).view(-1) == i].tolist()
         if len(target_ids) == 0:
-            if (len(pred_ids) != 0):  ## added these 2 lines: Before, we did not incorporate classes that were predicted, but did not appear.
-                miou.append(0)  ## Not sure if it makes sense to include this
+            if (len(pred_ids) != 0): # added these 2 lines: Before, we did not incorporate classes that were predicted, but did not appear.
+                miou.append(0)
             continue
         num_correct = len(set(pred_ids).intersection(set(target_ids)))
         num_union = len(set(pred_ids).union(set(target_ids)))
@@ -762,8 +759,7 @@ def eval_wholescene(args, dataloader):
 def evaluate(args):
     # prepare data
     print("preparing data...")
-    #scene_list = get_scene_list("python/Mesh2Loc/data/scannetv2_val.txt")
-
+    # scene_list = get_scene_list("python/Mesh2Loc/data/scannetv2_val.txt")
 
     test_dataset = Indoor3DSemSeg(num_points, root=opt.input_folder_3d, train=False, test=True)
     test_dataloader = DataLoader(

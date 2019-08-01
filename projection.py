@@ -1,5 +1,4 @@
 
-import numpy as np
 import torch
 from torch.autograd import Function
 
@@ -12,21 +11,24 @@ class ProjectionHelper():
         self.image_dims = image_dims
         self.accuracy = accuracy
 
-
     def depth_to_skeleton(self, ux, uy, depth):
         # 2D to 3D coordinates with depth (used in compute_frustum_bounds)
         x = (ux - self.intrinsic[0][2]) / self.intrinsic[0][0]
         y = (uy - self.intrinsic[1][2]) / self.intrinsic[1][1]
         return torch.Tensor([depth*x, depth*y, depth])
 
-
     def skeleton_to_depth(self, p):
         x = (p[0] * self.intrinsic[0][0]) / p[2] + self.intrinsic[0][2]
         y = (p[1] * self.intrinsic[1][1]) / p[2] + self.intrinsic[1][2]
         return torch.Tensor([x, y, p[2]])
 
-
     def compute_frustum_corners(self, camera_to_world):
+        """
+        Computes the coordinates of the viewing frustum corresponding to one image and given camera parameters
+
+        :param camera_to_world: torch tensor of shape (4, 4)
+        :return: corner_coords: torch tensor of shape (8, 4)
+        """
         # input: camera pose (torch.Size([4, 4]))
         # output: coordinates of the corner points of the viewing frustum of the camera
 
@@ -50,8 +52,13 @@ class ProjectionHelper():
         return corner_coords
 
     def compute_frustum_normals(self, corner_coords):
-        # input: coordinates of the corner points of the viewing frustum
-        # output: normals of the 6 planes defining the viewing frustum
+        """
+        Computes the normal vectors (pointing inwards) to the 6 planes that bound the viewing frustum
+
+        :param corner_coords: torch tensor of shape (8, 4), coordinates of the corner points of the viewing frustum
+        :return: normals: torch tensor of shape (6, 3)
+        """
+
         normals = corner_coords.new(6, 3)
 
         # compute plane normals
@@ -87,42 +94,29 @@ class ProjectionHelper():
 
         return normals
 
-    def point_in_frustum(self, corner_coords, normals, new_pt):
-        # input: coordinates of points defining the frustum, normals defining the planes of the frustum
-        #       (pointing inwards), new point (must be torch.Size([3]))
-        # output: 1 or 0 whether new point is in viewing frustum or not
-
-        # create vector from new_pt to the planes
-        point_to_plane = corner_coords.new(6, 3)
-        point_to_plane[0:3] = (new_pt - corner_coords[2][:3].view(-1)).repeat(3, 1)
-        point_to_plane[3:6] = (new_pt - corner_coords[4][:3].view(-1)).repeat(3, 1)
-
-        # check if the scalar product with the normals is positive
-        for k, normal in enumerate(normals):
-            if torch.round(torch.dot(normal, point_to_plane[k]) * 100) / (100) > 0:
-                return 0
-
-        return 1
-
     def points_in_frustum(self, corner_coords, normals, new_pts, return_mask=False):
-        # input: coordinates of points defining the frustum, normals defining the planes of the frustum
-        #       (pointing inwards), point set to be analyzed
-        # output: number of point that lie within the frustum
+        """
+        Checks whether new_pts ly in the frustum defined by the coordinates of the corners coner_coords
+
+        :param corner_coords: torch tensor of shape (8, 4), coordinates of the corners of the viewing frustum
+        :param normals: torch tensor of shape (6, 3), normal vectors of the 6 planes of the viewing frustum
+        :param new_pts: (num_points, 3)
+        :param return_mask: if False, returns number of new_points in frustum
+        :return: if return_mask=True, returns Boolean mask determining whether point is in frustum or not
+        """
 
         # create vectors from point set to the planes
         point_to_plane1 = (new_pts.cuda() - corner_coords[2][:3].view(-1))
         point_to_plane2 = (new_pts.cuda() - corner_coords[4][:3].view(-1))
-        # check if the scalar product with the normals is positive
 
+        # check if the scalar product with the normals is positive
         masks = list()
         # for each normal, create a mask for points that lie on the correct side of the plane
         for k, normal in enumerate(normals):
-            if (k < 3):
-                masks.append(torch.round(torch.mm(point_to_plane1, normal.unsqueeze(1)) * 100) / (100) < 0)
-                # somehow this has to be inverted to a "<" instead of ">". Don't understand the difference in
-                # the 2 functions torch.mm and torch.dot
+            if k < 3:
+                masks.append(torch.round(torch.mm(point_to_plane1, normal.unsqueeze(1)) * 100) / 100 < 0)
             else:
-                masks.append(torch.round(torch.mm(point_to_plane2, normal.unsqueeze(1)) * 100) / (100) < 0)
+                masks.append(torch.round(torch.mm(point_to_plane2, normal.unsqueeze(1)) * 100) / 100 < 0)
         mask = torch.ones(point_to_plane1.shape[0]) > 0
         mask = mask.cuda()
 
@@ -130,16 +124,22 @@ class ProjectionHelper():
         for addMask in masks:
             mask = mask * addMask.squeeze()
 
-        if not return_mask:
-            return torch.sum(mask)
-        else:
+        if return_mask:
             return mask
+        else:
+            return torch.sum(mask)
 
     def compute_projection(self, points, depth, camera_to_world, num_points):
-        # input: tensor containing all points of the point cloud, depth map (size: proj_image), camera pose (4x4),
-        #          number of points in our point cloud
-        # maybe: initialize ProjectionHelper with num_points
-        # output: correspondence of points to pixels
+        """
+        Computes correspondances of points to pixels
+
+        :param points: tensor containing all points of the point cloud (num_points, 3)
+        :param depth: depth map (size: proj_image)
+        :param camera_to_world: camera pose (4, 4)
+        :param num_points: number of points in one sample point cloud (4096)
+        :return: indices_3d (array with point indices that correspond to a pixel),
+                indices_2d (array with pixel indices that correspond to a point)
+        """
 
         world_to_camera = torch.inverse(camera_to_world)
 
@@ -152,11 +152,8 @@ class ProjectionHelper():
         # compute viewing frustum
         corner_coords = self.compute_frustum_corners(camera_to_world)
         normals = self.compute_frustum_normals(corner_coords)
-        # .cuda()
 
         # check if points are in viewing frustum and only keep according indices
-        # mask_frustum_bounds = torch.ByteTensor(num_points).cuda()
-        # for k, point in enumerate(points):
         mask_frustum_bounds = self.points_in_frustum(corner_coords, normals, points, return_mask=True).cuda()
 
         if not mask_frustum_bounds.any():
@@ -204,7 +201,7 @@ class Projection(Function):
 
     @staticmethod
     def forward(ctx, label, lin_indices_3d, lin_indices_2d, num_points):
-        r"""
+        """
         forward pass of backprojection for 2d features onto 3d points
 
         :param label: image features (shape: (num_input_channels, proj_image_dims[0], proj_image_dims[1]))
@@ -213,7 +210,6 @@ class Projection(Function):
         :param num_points: number of points in one sample
         :return: array of points in sample with projected features (shape: (num_input_channels, num_points))
         """
-        # label  = image_features (128, 41, 32)
         ctx.save_for_backward(lin_indices_3d, lin_indices_2d)
         num_label_ft = 1 if len(label.shape) == 2 else label.shape[0] # = num_input_channels
 

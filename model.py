@@ -21,7 +21,7 @@ class Model2d3d(nn.Module):
 
     def __init__(self, num_classes, num_images, input_channels, intrinsic, image_dims, depth_min, depth_max, accuracy,
                  fusion = True, fuseAtPosition=2, fuse_no_ft_pn = False, pointnet_pointnet = False):
-        r"""
+        """
         Initialization of our model with different fusing methods for feature and geometry point clouds in PointNet++.
         Default settings initialize our best model, i.e. fusion after two set abstraction layers.
 
@@ -221,7 +221,7 @@ class Model2d3d(nn.Module):
         self.cls_layer = nn.Sequential(*cls_layers)
 
     def _break_up_pc(self, pc):
-        r"""
+        """
         Breaks point cloud up into coordinates (xyz) and features
 
         :param pc: Variable(torch.cuda.FloatTensor), (B, N, 3 + input_channels)
@@ -236,7 +236,7 @@ class Model2d3d(nn.Module):
         return xyz, features
 
     def forward(self, point_cloud, image_features, projection_indices_3d, projection_indices_2d):
-        r"""
+        """
         forward pass of 3d model on fused input of features and geometry
 
         :param point_cloud: shape: (batch_size*num_images, num_input_channels, num_points_sample)
