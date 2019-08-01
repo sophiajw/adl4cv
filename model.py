@@ -396,7 +396,7 @@ class BeachNet(nn.Module):
             concatenated_cloud = torch.cat([point_cloud, image_features], 2)
 
             # split point cloud into coordinates and features
-            xyz, features = self._break_up_pc(concatenated_cloud)
+            xyz, features = self._break_up_pc(point_cloud)
             l_xyz, l_features = [xyz], [features]
 
             # set abstraction

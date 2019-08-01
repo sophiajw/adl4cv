@@ -76,13 +76,14 @@ class DataLoader(data.Dataset):
                 list = os.listdir(root)
                 for entry in list:
                     if(entry.startswith("test")):
+                        countTo5 += 1
                         f.writelines(os.path.join(root, entry + "\n"))
             all_files = _get_data_files(os.path.join(root, "all_files_test.txt"))
         elif(self.visualize):
             with open(os.path.join(root, "all_files_vis.txt"), 'w+') as f:
                 list = os.listdir(root)
                 for entry in list:
-                    if(vis_scene in entry):
+                    if(entry.startswith("test")):
                         f.writelines(os.path.join(root, entry + "\n"))
             all_files = _get_data_files(os.path.join(root, "all_files_vis.txt"))
         else:
@@ -93,36 +94,48 @@ class DataLoader(data.Dataset):
                         f.writelines(os.path.join(root,entry + "\n"))
             all_files = _get_data_files(os.path.join(root, "all_files_val.txt"))
 
-
         data_batchlist, label_batchlist, frames_batchlist = [], [], []
         count = 0
-        for f in all_files:
-            count += 1
-            print(count, "/", len(all_files))
-            tempData, tempLabel, tempFrames = _load_data_file(f)
-            for k, v in tempData.items():
-                data_batchlist.append(v[:])
-                print(v[:].shape)
-            for k, v in tempLabel.items():
-                label_batchlist.append(v[:])
-            for k, v in tempFrames.items():
-                frames_batchlist.append(v[:])
+
+        if(self.visualize):
+            for f in all_files:
+                count += 1
+                tempData, tempLabel, tempFrames = _load_data_file(f)
+                largeScene = int(vis_scene[:4])
+                scene_ID = int(vis_scene[5:7])
+                for k, v in tempFrames.items():
+                    if (v[:][0][0] == largeScene and v[:][0][1] == scene_ID):
+                        v = tempData[k]
+                        data_batchlist.append(v[:])
+                        v = tempLabel[k]
+                        label_batchlist.append(v[:])
+                        v = tempFrames[k]
+                        frames_batchlist.append(v[:])
+        else:
+            for f in all_files:
+                count += 1
+                print(count, "/", len(all_files))
+                tempData, tempLabel, tempFrames = _load_data_file(f)
+                for k, v in tempData.items():
+                    data_batchlist.append(v[:])
+                for k, v in tempLabel.items():
+                    label_batchlist.append(v[:])
+                for k, v in tempFrames.items():
+                    frames_batchlist.append(v[:])
 
         self.points = data_batchlist
         self.labels = label_batchlist
         self.frames = frames_batchlist
 
-
         # Compute Label weights
         label_counts = np.ones(21)
-        count_total_points = 0
+        count_total_points = 1e-8
         for labels_it in label_batchlist:
             count_total_points += labels_it.shape[1]
             for i in range(21):
                 label_counts[i] += np.sum(labels_it[0] == i)
 
         self.labelweights = label_counts / count_total_points
-        print(self.labelweights)
         for c in range(21):
             if (c == 0):
                 self.labelweights[c] = 1.0

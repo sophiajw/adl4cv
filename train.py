@@ -4,7 +4,6 @@ Based on https://github.com/angeladai/3DMV and https://github.com/daveredrum/Poi
 import argparse
 import os, sys, time
 import torch
-import torch.nn as nn
 import numpy as np
 from datetime import datetime
 from torch.utils.data import DataLoader
@@ -87,15 +86,13 @@ best_report_template = BEST_REPORT_TEMPLATE
 
 parser = argparse.ArgumentParser()
 # data paths
-#parser.add_argument('--input_folder_3d', required=False, default='/workspace/beachnet_train/bn_train_data')
 parser.add_argument('--input_folder_3d', required=False,
-                    default='/media/lorenzlamm/My Book/Final_Scannet_Data/final_containers')
+                    default='/workspace/beachnet_train/bn_train_data')
 parser.add_argument('--root_directory', default='/workspace/beachnet_train/adl4cv', help='directory of train.py')
 parser.add_argument('--val_data_list', default='', help='path to file list of h5 val data')
 parser.add_argument('--output', default='./logs_evaluation', help='folder to output model checkpoints')
-#parser.add_argument('--data_path_2d', required=False, default='/workspace/beachnet_train/bn_train_data',
-#                        help='path to 2d train data')
-parser.add_argument('--data_path_2d', required=False, default='/media/lorenzlamm/My Book/Scannet/out_images', help='path to 2d train data')
+parser.add_argument('--data_path_2d', required=False, default='/workspace/beachnet_train/bn_train_data',
+                        help='path to 2d train data')
 
 # train params
 parser.add_argument('--num_classes', default=21, help='#classes')
@@ -108,9 +105,8 @@ parser.add_argument('--momentum', type=float, default=0.9, help='momentum, defau
 parser.add_argument('--weight_decay', type=float, default=0.0005, help='weight decay, default=0.0005')
 parser.add_argument('--weight_decay_pointnet', type=float, default=0, help='L2 regularization coeff [default: 0.0]')
 parser.add_argument('--model2d_type', default='scannet', help='which enet (scannet)')
-#parser.add_argument('--model2d_path', required=False,
-#                        default='/workspace/beachnet_train/bn_train_data/scannetv2_enet.pth', help='path to enet model')
-parser.add_argument('--model2d_path', required=False, default='//home/lorenzlamm/Dokumente/final_new/adl4cv/scannetv2_enet.pth', help='path to enet model')
+parser.add_argument('--model2d_path', required=False,
+                        default='/workspace/beachnet_train/bn_train_data/scannetv2_enet.pth', help='path to enet model')
 parser.add_argument('--use_proxy_loss', dest='use_proxy_loss', action='store_true')
 parser.add_argument('--num_points', default=4096, help='number of points in one sample')
 
@@ -179,38 +175,38 @@ if opt.use_proxy_loss:
     optimizer2dc = torch.optim.SGD(model2d_classifier.parameters(), lr=opt.lr, momentum=opt.momentum, weight_decay=opt.weight_decay)
 
 
-
-train_dataset = DataLoader(num_points, root=opt.input_folder_3d, train=True)
-val_dataset = DataLoader(num_points, root=opt.input_folder_3d, train=False)
-train_dataloader = DataLoader(
-    train_dataset,
-    batch_size=opt.batch_size,
-    pin_memory=True,
-    num_workers=8,
-    shuffle=True
-)
-val_dataloader = DataLoader(
-    val_dataset,
-    batch_size=4,
-    shuffle=False,
-    pin_memory=True,
-    num_workers=8
-)
-dataloader = {
-    "train": train_dataloader,
-    "val": val_dataloader
-}
-train_examples = len(train_dataset)
-val_examples = len(val_dataset)
-
-
-_SPLITTER = ','
+if(not eval_flag and not visual_flag):
+    train_dataset = DataLoader(num_points, root=opt.input_folder_3d, train=True)
+    val_dataset = DataLoader(num_points, root=opt.input_folder_3d, train=False)
+    train_dataloader = DataLoader(
+        train_dataset,
+        batch_size=opt.batch_size,
+        pin_memory=True,
+        num_workers=8,
+        shuffle=True
+    )
+    val_dataloader = DataLoader(
+        val_dataset,
+        batch_size=4,
+        shuffle=False,
+        pin_memory=True,
+        num_workers=8
+    )
+    dataloader = {
+        "train": train_dataloader,
+        "val": val_dataloader
+    }
+    train_examples = len(train_dataset)
+    val_examples = len(val_dataset)
 
 
-print("\n[info]")
-print("Train examples: {}".format(train_examples))
-print("Evaluation examples: {}".format(val_examples))
-print("Start training...\n")
+    _SPLITTER = ','
+
+
+    print("\n[info]")
+    print("Train examples: {}".format(train_examples))
+    print("Evaluation examples: {}".format(val_examples))
+    print("Start training...\n")
 
 def train(epoch, train_dataloader):
     """
@@ -583,34 +579,36 @@ def main():
         print('Epoch: {}\t{}'.format(epoch, train_dataloader))
         # Visualize a test scene
         if(visual_flag):
-            scene_nr = "0568_00"
-            vis_dataset = DataLoader(num_points, root=opt.input_folder_3d, train=False, test=False, visualize=True, vis_scene = scene_nr)
-            vis_dataloader = DataLoader(
-                vis_dataset,
-                batch_size=1,
-                pin_memory=True,
-                num_workers=8,
-                shuffle=False
-            )
-            pred_scene, gt_scene = test_for_visual(vis_dataloader)
-            np.savetxt(os.path.join(opt.output, "scene" + scene_nr + ".txt"), pred_scene, delimiter=',')
-            np.savetxt(os.path.join(opt.output, "scene" + scene_nr + "_GT.txt"), gt_scene, delimiter=',')
-
+            scene_nrs = ["0086_00", "0187_01", "0552_01", "0568_00", "0699_00", "0700_01"]
+            print("Visualizing...")
+            for scene_nr in scene_nrs:
+                vis_dataset = DataLoader(num_points, root=opt.input_folder_3d, train=False, test=False, visualize=True, vis_scene = scene_nr)
+                vis_dataloader = DataLoader(
+                    vis_dataset,
+                    batch_size=1,
+                    pin_memory=True,
+                    num_workers=8,
+                    shuffle=False
+                )
+                pred_scene, gt_scene = test_for_visual(vis_dataloader)
+                np.savetxt(os.path.join(opt.output, "scene" + scene_nr + "_pn.txt"), pred_scene, delimiter=',')
+                np.savetxt(os.path.join(opt.output, "scene" + scene_nr + "_GT.txt"), gt_scene, delimiter=',')
+                print("Saved to disk")
+            return
         # if we want to evaluate our model, we feed in the test data
         if(eval_flag):
             test_dataset = DataLoader(num_points, root=opt.input_folder_3d, train=False, test=True)
             test_dataloader = DataLoader(
                 test_dataset,
-                batch_size=1,
+                batch_size=4,
                 pin_memory=True,
                 num_workers=8,
                 shuffle=False
             )
             test(epoch, test_dataloader)
-            if (eval_flag):
-                print("test_loss", np.mean([loss for loss in log["val"][epoch]["loss"]]))
-                print("test_acc", np.mean([acc for acc in log["val"][epoch]["acc"]]))
-                print("test_miou", np.mean([miou for miou in log["val"][epoch]["miou"]]))
+            print("test_loss", np.mean([loss for loss in log["val"][epoch]["loss"]]))
+            print("test_acc", np.mean([acc for acc in log["val"][epoch]["acc"]]))
+            print("test_miou", np.mean([miou for miou in log["val"][epoch]["miou"]]))
             return
         train(epoch, train_dataloader)
         if has_val:

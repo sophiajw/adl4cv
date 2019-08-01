@@ -95,6 +95,7 @@ train_loader = DataLoader(
 
 
 model = torch.load("modelLog110.model")
+model = torch.load("/home/lorenzlamm/Dokumente/poster_pres/15model.pth")
 print("JI")
 points, labels, frames = data_util.load_hdf5_data("/home/lorenzlamm/Dokumente/final_network/scene_container_0.hdf5", 21)
 print(points.shape)
@@ -111,4 +112,3 @@ labels = labels[0].unsqueeze(0)
 print(torch.unique(labels))
 print(torch.sum(labels!=pred_labels.cpu()))
 
-for 

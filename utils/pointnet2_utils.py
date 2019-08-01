@@ -88,7 +88,6 @@ class ThreeNN(Function):
         """
         assert unknown.is_contiguous()
         assert known.is_contiguous()
-
         B, N, _ = unknown.size()
         m = known.size(1)
         dist2 = torch.cuda.FloatTensor(B, N, 3)
@@ -126,7 +125,6 @@ class ThreeInterpolate(Function):
         n = idx.size(1)
         ctx.three_interpolate_for_backward = (idx, weight, m)
         output = torch.cuda.FloatTensor(B, c, n)
-
         pointnet2.three_interpolate_wrapper(B, c, m, n, features, idx, weight, output)
         return output
 

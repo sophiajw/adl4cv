@@ -26,7 +26,6 @@ class _PointnetSAModuleBase(nn.Module):
             new_features: (B, npoint, \sum_k(mlps[k][-1])) tensor of the new_features descriptors
         """
         new_features_list = []
-
         xyz_flipped = xyz.transpose(1, 2).contiguous()
         if new_xyz is None:
             new_xyz = pointnet2_utils.gather_operation(
@@ -36,7 +35,6 @@ class _PointnetSAModuleBase(nn.Module):
 
         for i in range(len(self.groupers)):
             new_features = self.groupers[i](xyz, new_xyz, features)  # (B, C, npoint, nsample)
-
             new_features = self.mlps[i](new_features)  # (B, mlp[-1], npoint, nsample)
             if self.pool_method == 'max_pool':
                 new_features = F.max_pool2d(
@@ -135,6 +133,7 @@ class PointnetFPModule(nn.Module):
         :return:
             new_features: (B, mlp[-1], n) tensor of the features of the unknown features
         """
+
         if known is not None:
             dist, idx = pointnet2_utils.three_nn(unknown, known)
             dist_recip = 1.0 / (dist + 1e-8)
@@ -144,7 +143,6 @@ class PointnetFPModule(nn.Module):
             interpolated_feats = pointnet2_utils.three_interpolate(known_feats, idx, weight)
         else:
             interpolated_feats = known_feats.expand(*known_feats.size()[0:2], unknown.size(1))
-
         if unknow_feats is not None:
             new_features = torch.cat([interpolated_feats, unknow_feats], dim=1)  # (B, C2 + C1, n)
         else:
