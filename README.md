@@ -1,4 +1,4 @@
-# adlcv
+# adl4cv
 Advanced Deep Learning for Computer Vision
 
 Our project:
@@ -30,10 +30,13 @@ To run the other model architectures that we implemented change the parameters i
 * Fuse after set abstraction layers: `fusion=True`, `fuse_at_position=4`, `fuse_no_ft_pn=False`, `pointnet_pointnet=False`
 * Fuse after two set abstraction layers: `fusion=True`, `fuse_at_position=2`, `fuse_no_ft_pn=False`, `pointnet_pointnet=False`
 
+To evaluate the model set `eval_flag = True` in l. 27 of `train.py`.
+To visualize a test scene set `visual_flag = True`in l.28 of `train.py` and set scene_nr in `main` to the scene id that you want to visualize. 
+
 ### References
 
-[1] Angela  Dai,  Angel  X.  Chang,  Manolis  Savva,  Maciej  Hal-ber, Thomas A. Funkhouser, and Matthias Nießner.  Scannet:Richly-annotated 3d reconstructions of indoor scenes. 2017.
+[1] Angela  Dai,  Angel  X.  Chang,  Manolis  Savva,  Maciej  Halber, Thomas A. Funkhouser, and Matthias Nießner.  Scannet:Richly-annotated 3d reconstructions of indoor scenes. 2017.
 
 [2] A.Dai,A.X.Chang,M.Savva,M.Halber,T.A.Funkhouser, and M. Nießner. Scannet: Richly-annotated 3d reconstruc- tions of indoor scenes. CoRR, abs/1702.04405, 2017. 1
 
-[5] C. R. Qi, L. Yi, H. Su, and L. J. Guibas. Pointnet++: Deep hierarchical feature learning on point sets in a metric space. CoRR, abs/1706.02413, 2017. 1
+[3] C. R. Qi, L. Yi, H. Su, and L. J. Guibas. Pointnet++: Deep hierarchical feature learning on point sets in a metric space. CoRR, abs/1706.02413, 2017. 1
