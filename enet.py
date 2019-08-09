@@ -593,6 +593,10 @@ def create_enet_for_3d(type, model_path, num_3d_classes):
     model_classifier = nn.Sequential(nn.Conv2d(128, num_3d_classes, (1, 1), (1, 1), (0, 0), (1, 1), 1, bias=False))
     for param in model_fixed.parameters():
         param.requires_grad = False
+    #for param in model_trainable.parameters():
+    #    param.requires_grad = False
+    #for param in model_classifier.parameters():
+    #    param.requires_grad = False
     return model_fixed, model_trainable, model_classifier
 
 
